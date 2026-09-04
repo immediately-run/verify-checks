@@ -1,0 +1,39 @@
+{
+  "name": "@immediately-run/verify-checks",
+  "version": "0.1.0",
+  "description": "Deterministic quality checks shared by the immediately.run core repos: clones (jscpd), unused exports (knip), untested logic (git merge-base + Untested trailers), dead CSS. Baselines are fingerprint sets that only shrink.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/immediately-run/verify-checks.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    "./baseline": "./src/baseline.mjs",
+    "./producers": "./src/producers.mjs",
+    "./clones": "./src/check-clones.mjs",
+    "./unused": "./src/check-unused.mjs",
+    "./untested": "./src/check-untested.mjs",
+    "./dead-css": "./src/check-dead-css.mjs"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "check:publish-version": "node scripts/check-publish-version.mjs --self-test && node scripts/check-publish-version.mjs"
+  },
+  "dependencies": {
+    "fast-glob": "3.3.3",
+    "jscpd": "5.1.2",
+    "knip": "6.34.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

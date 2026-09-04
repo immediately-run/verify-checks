@@ -1,0 +1,62 @@
+name: ci
+
+# Test on every PR + push; publish to npm on push to main via npm trusted
+# publishing (OIDC), mirroring platform-constants / the SDK release job. The
+# five core repos consume this package as a pinned github: dependency until the
+# npm trusted-publishing link exists, then move to pinned npm versions.
+# NOTE: npm trusted publishing must be configured for this package on
+# npmjs.com before the FIRST publish can succeed (an unpublished package name
+# cannot be published by OIDC alone). Until the operator links it, the publish
+# step detects the E404 and skips loudly; once the package exists on npm the
+# step is a real gate and a red run means a stale or mislinked publish.
+# check:publish-version (R3-327) moves the "shipped bytes changed ⇒ version
+# bumped" question to PR time.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # check:publish-version diffs the branch against origin/main, so the
+          # base ref must exist. A default shallow PR checkout fetches only the
+          # merge ref and the step dies on "Not a valid object name origin/main".
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # never cache in release builds
+      # Trusted publishing requires npm >= 11.5.1
+      - run: npm install -g npm@latest
+      # R3-327 — shipped bytes changed ⇒ the version was bumped in this PR
+      - name: Shipped bytes changed ⇒ the version was bumped in this PR
+        if: github.event_name == 'pull_request'
+        run: npm run check:publish-version
+      - run: npm ci
+      - run: npm test
+      - name: Publish to npm via trusted publishing (skip if version already published)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          # setup-node's registry-url writes an .npmrc bound to NODE_AUTH_TOKEN.
+          # Clearing it forces OIDC trusted publishing instead of (empty) token auth.
+          NODE_AUTH_TOKEN: ""
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          PKG_VER=$(node -p "require('./package.json').version")
+          if ! npm view "$PKG_NAME" version >/dev/null 2>&1; then
+            echo "::notice::$PKG_NAME does not exist on npm yet — trusted publishing is not linked (operator step). Skipping the publish; everything else ran."
+            exit 0
+          fi
+          if npm view "$PKG_NAME@$PKG_VER" version >/dev/null 2>&1; then
+            echo "::notice::$PKG_NAME@$PKG_VER already published — skipping."
+            exit 0
+          fi
+          npm publish --access public
