@@ -1,8 +1,8 @@
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { cloneFragments, commitTrailers, changedSince, knipFingerprints, runJscpd, runKnip } from '../src/producers.mjs'
 import { diffAgainstBaseline, fingerprint, readBaseline } from '../src/baseline.mjs'
 import { untestedFiles } from '../src/check-untested.mjs'
@@ -211,6 +211,39 @@ describe('baseline ratchet', () => {
     expect(matchesAny('src/lib/a.ts', config)).toBe(true)
     expect(matchesAny('src/index.ts', config)).toBe(false)
     expect(matchesAny('docs/a.md', config)).toBe(false)
+  })
+})
+
+describe('check-publish-version helpers', () => {
+  // versionPublished against stub npm executables — the three outcomes must
+  // stay three: published, E404-not-published, and indeterminate.
+  function stubNpm(script: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'vc-npm-'))
+    const path = join(dir, 'npm-stub')
+    writeFileSync(path, `#!/bin/sh\n${script}\n`)
+    chmodSync(path, 0o755)
+    return path
+  }
+
+  it('versionPublished: true when the version answers, false on E404, throws when indeterminate', async () => {
+    const { versionPublished } = await import('../scripts/check-publish-version.mjs')
+    const published = stubNpm(`echo "0.1.0"`)
+    const notPublished = stubNpm(`echo "npm error code E404" >&2; exit 1`)
+    const broken = stubNpm(`echo "npm error network ECONNREFUSED" >&2; exit 1`)
+    try {
+      expect(versionPublished('p', '0.1.0', published)).toBe(true)
+      expect(versionPublished('p', '0.1.0', notPublished)).toBe(false)
+      expect(() => versionPublished('p', '0.1.0', broken)).toThrow(/indeterminate/)
+    } finally {
+      for (const p of [published, notPublished, broken]) rmSync(join(p, '..'), { recursive: true, force: true })
+    }
+  })
+
+  it('shipsChanges: src counts, tests/docs/CI do not', async () => {
+    const { shipsChanges } = await import('../scripts/check-publish-version.mjs')
+    expect(shipsChanges(['src/producers.mjs'])).toBe(true)
+    expect(shipsChanges(['package-lock.json'])).toBe(true)
+    expect(shipsChanges(['src/index.test.ts', 'test/x.ts', 'README.md', '.github/workflows/ci.yml'])).toBe(false)
   })
 })
 

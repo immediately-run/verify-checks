@@ -17,24 +17,20 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { changedSince as gitChangedSince } from '../src/producers.mjs'
 
-const git = (args) => execFileSync('git', args, { encoding: 'utf8' })
-
-function changedSince(base) {
-  let mb
+// The diff logic is the package's own changedSince (merge-base + ACMRT), not a
+// second copy — this repo exists because the diff logic was implemented five times.
+export function changedSince(base) {
   try {
-    mb = git(['merge-base', 'HEAD', base]).trim()
-  } catch {
-    console.error(`check:publish-version: cannot resolve ${base} — run: git fetch origin`)
+    return gitChangedSince(base, process.cwd())
+  } catch (err) {
+    console.error(`check:publish-version: ${err.message}`)
     process.exit(1)
   }
-  return git(['diff', '--name-only', '--diff-filter=ACMRT', `${mb}..HEAD`])
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
 }
 
-function shipsChanges(changed) {
+export function shipsChanges(changed) {
   return changed.some((path) => {
     if (path === 'package.json' || path === 'package-lock.json') return true
     if (path.startsWith('src/')) {
@@ -46,15 +42,17 @@ function shipsChanges(changed) {
   })
 }
 
-function versionPublished(name, version) {
+// true = published; false = registry answered E404 for this exact version;
+// throws = registry unreachable or indeterminate ("not published" and "could
+// not tell" are different answers). `npmCmd` is injectable for tests.
+export function versionPublished(name, version, npmCmd = 'npm') {
   try {
-    execFileSync('npm', ['view', `${name}@${version}`, 'version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    execFileSync(npmCmd, ['view', `${name}@${version}`, 'version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
     return true
   } catch (err) {
     const text = `${err.stdout ?? ''} ${err.stderr ?? ''}`
     if (/E404/.test(text)) return false
-    console.error(`check:publish-version: registry unreachable or indeterminate for ${name}@${version} — refusing to guess. (${text.trim().split('\n')[0]})`)
-    process.exit(1)
+    throw new Error(`registry unreachable or indeterminate for ${name}@${version} — refusing to guess (${text.trim().split('\n')[0]})`)
   }
 }
 
