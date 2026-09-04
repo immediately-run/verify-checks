@@ -17,6 +17,8 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { changedSince as gitChangedSince } from '../src/producers.mjs'
 
 // The diff logic is the package's own changedSince (merge-base + ACMRT), not a
@@ -56,8 +58,14 @@ export function versionPublished(name, version, npmCmd = 'npm') {
   }
 }
 
+// The check runs only when invoked as a script. Imported (the tests exercise
+// the exported helpers), it must not fire a live `npm view` — and once the
+// package is published, its exit would kill the test runner mid-suite.
+const invokedDirectly =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+
 const selfTest = process.argv.includes('--self-test')
-if (selfTest) {
+if (invokedDirectly && selfTest) {
   const same = shipsChanges(['src/producers.mjs'])
   const testsOnly = shipsChanges(['test/baseline.test.ts', 'README.md', '.github/workflows/ci.yml'])
   if (same !== true || testsOnly !== false) {
@@ -68,16 +76,18 @@ if (selfTest) {
   process.exit(0)
 }
 
-const { name, version } = JSON.parse(readFileSync('package.json', 'utf8'))
-const baseIndex = process.argv.indexOf('--base')
-const base = baseIndex !== -1 ? process.argv[baseIndex + 1] : 'origin/main'
-const changed = changedSince(base)
-if (!shipsChanges(changed)) {
-  console.log(`check:publish-version: no shipped bytes changed — no bump needed`)
-  process.exit(0)
+if (invokedDirectly) {
+  const { name, version } = JSON.parse(readFileSync('package.json', 'utf8'))
+  const baseIndex = process.argv.indexOf('--base')
+  const base = baseIndex !== -1 ? process.argv[baseIndex + 1] : 'origin/main'
+  const changed = changedSince(base)
+  if (!shipsChanges(changed)) {
+    console.log(`check:publish-version: no shipped bytes changed — no bump needed`)
+    process.exit(0)
+  }
+  if (versionPublished(name, version)) {
+    console.error(`check:publish-version: ${name}@${version} is already published but shipped bytes changed in this PR — bump the version.`)
+    process.exit(1)
+  }
+  console.log(`check:publish-version: ${name}@${version} is unpublished — bump is consistent`)
 }
-if (versionPublished(name, version)) {
-  console.error(`check:publish-version: ${name}@${version} is already published but shipped bytes changed in this PR — bump the version.`)
-  process.exit(1)
-}
-console.log(`check:publish-version: ${name}@${version} is unpublished — bump is consistent`)
