@@ -1,0 +1,206 @@
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, it } from 'vitest'
+import { cloneFingerprints, commitTrailers, changedSince, knipFingerprints, runJscpd } from '../src/producers.mjs'
+import { diffAgainstBaseline, fingerprint, readBaseline } from '../src/baseline.mjs'
+import { untestedFiles } from '../src/check-untested.mjs'
+
+const REPO_ROOT = new URL('..', import.meta.url).pathname
+
+describe('diffAgainstBaseline', () => {
+  it('a new fingerprint fails (shows up in .new)', () => {
+    const { new: fresh, stale } = diffAgainstBaseline(['aaa'], [])
+    expect(fresh).toEqual(['aaa'])
+    expect(stale).toEqual([])
+  })
+
+  it('a stale entry fails, with the entry named', () => {
+    const { new: fresh, stale } = diffAgainstBaseline([], ['bbb'])
+    expect(fresh).toEqual([])
+    expect(stale).toEqual(['bbb'])
+  })
+
+  it('identical sets pass', () => {
+    const { new: fresh, stale } = diffAgainstBaseline(['x', 'y'], ['y', 'x'])
+    expect(fresh).toEqual([])
+    expect(stale).toEqual([])
+  })
+})
+
+// One case runs the REAL producer — jscpd over the committed two-file fixture —
+// so fingerprinting consumes jscpd's actual output shape, not a hand-typed
+// object shaped like what we believe jscpd emits.
+describe('runJscpd (real producer)', () => {
+  it('reports the duplicated fixture function and its fragments feed the ratchet', { timeout: 180_000 }, () => {
+    const report = runJscpd({
+      patterns: ['test/fixtures/clones'],
+      cwd: REPO_ROOT,
+    })
+    const fragments = cloneFingerprints(report)
+    expect(fragments.length).toBeGreaterThan(0)
+    expect(fragments.some((fragment) => fragment.includes('formatTileLabel'))).toBe(true)
+
+    const found = fragments.map((fragment) => fingerprint(fragment))
+    const { new: fresh, stale } = diffAgainstBaseline(found, [])
+    expect(fresh).toEqual([...found].sort())
+    expect(stale).toEqual([])
+  })
+})
+
+describe('untestedFiles', () => {
+  const logicPaths = { include: ['src/lib/**', 'scripts/**'] }
+
+  it('a logic file with a sibling test passes', () => {
+    const { untested } = untestedFiles({
+      changed: ['src/lib/foo.ts'],
+      tests: ['src/lib/foo.test.ts'],
+      logicPaths,
+    })
+    expect(untested).toEqual([])
+  })
+
+  it('a logic file without one fails; files outside logicPaths are ignored', () => {
+    const { untested } = untestedFiles({
+      changed: ['src/lib/foo.ts', 'src/ui/bar.tsx'],
+      tests: [],
+      logicPaths,
+    })
+    expect(untested).toEqual(['src/lib/foo.ts'])
+  })
+
+  it('a trailer passes the file and its reason appears in the declared output', () => {
+    const { untested, declared } = untestedFiles({
+      changed: ['src/lib/foo.ts'],
+      tests: [],
+      trailers: [{ file: 'src/lib/foo.ts', reason: 'drives the live host only' }],
+      logicPaths,
+    })
+    expect(untested).toEqual([])
+    expect(declared).toEqual([{ file: 'src/lib/foo.ts', reason: 'drives the live host only' }])
+  })
+})
+
+// The git-reading path, exercised by the real producer: a temporary repo with
+// two commits, the second carrying an Untested trailer.
+describe('changedSince + commitTrailers (real git)', () => {
+  it('reads the merge-base diff and the trailer bodies', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vc-git-'))
+    const git = (args: string[]) =>
+      execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
+    try {
+      git(['init', '-b', 'main'])
+      git(['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'])
+      // work on a branch off main, exactly the PR shape the check consumes:
+      // merge-base(main, HEAD) is the first commit, so the diff is the second
+      git(['checkout', '-b', 'feature'])
+      writeFileSync(join(dir, 'lib-logic-file.ts'), 'export const x = 1\n')
+      git(['add', '.'])
+      git([
+        '-c', 'user.email=t@t', '-c', 'user.name=t',
+        'commit', '-m', 'add logic\n\nUntested: lib-logic-file.ts -- no runner in this fixture',
+      ])
+      expect(changedSince('main', dir)).toContain('lib-logic-file.ts')
+      expect(commitTrailers('main', dir)).toEqual([
+        { file: 'lib-logic-file.ts', reason: 'no runner in this fixture' },
+      ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('knipFingerprints', () => {
+  // Recorded from knip 6.34.0's real `--reporter json` output (run over this
+  // repo), so the parser consumes the shape knip actually emits.
+  const recorded = {
+    issues: [
+      {
+        file: 'test/fixtures/clones/a.ts',
+        binaries: [],
+        dependencies: [],
+        exports: [],
+        files: [{ name: 'test/fixtures/clones/a.ts' }],
+      },
+      {
+        file: 'src/lib/legacy.ts',
+        binaries: [],
+        dependencies: [{ name: 'jscpd', line: 3, col: 6, pos: 90 }],
+        exports: [{ name: 'oldHelper', line: 5, col: 14, pos: 120 }],
+        files: [],
+      },
+      {
+        file: 'package.json',
+        binaries: [],
+        dependencies: [{ name: 'jscpd', line: 30, col: 6, pos: 909 }],
+        exports: [],
+        files: [],
+      },
+    ],
+  }
+
+  it('baselines unused files as file:(file) and unused exports as file:export', () => {
+    expect(knipFingerprints(recorded).sort()).toEqual([
+      'src/lib/legacy.ts:oldHelper',
+      'test/fixtures/clones/a.ts:(file)',
+    ])
+  })
+})
+
+describe('baseline ratchet', () => {
+  it('writeBaselineFile dedupes and sorts', async () => {
+    const { writeBaselineFile, readBaseline } = await import('../src/baseline.mjs')
+    const dir = mkdtempSync(join(tmpdir(), 'vc-write-'))
+    try {
+      const path = join(dir, 'b.json')
+      writeBaselineFile(path, ['z', 'a', 'z'])
+      expect(readBaseline(path)).toEqual(['a', 'z'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('--write-baseline refuses to overwrite an existing baseline', async () => {
+    const { ratchet } = await import('../src/baseline.mjs')
+    const dir = mkdtempSync(join(tmpdir(), 'vc-refuse-'))
+    try {
+      const path = join(dir, 'b.json')
+      writeFileSync(path, '["existing"]\n')
+      const errSpy = []
+      const originalError = console.error
+      console.error = (...args) => errSpy.push(args.join(' '))
+      try {
+        await ratchet({ check: 'clones', findings: ['x'], baselinePath: path, argv: ['--write-baseline'] })
+      } finally {
+        console.error = originalError
+      }
+      expect(process.exitCode).toBe(1)
+      expect(errSpy.join('\n')).toMatch(/refusing to overwrite/)
+      process.exitCode = 0
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('matchesAny honours exclude', async () => {
+    const { matchesAny } = await import('../src/check-untested.mjs')
+    const config = { include: ['src/**'], exclude: ['src/index.ts'] }
+    expect(matchesAny('src/lib/a.ts', config)).toBe(true)
+    expect(matchesAny('src/index.ts', config)).toBe(false)
+    expect(matchesAny('docs/a.md', config)).toBe(false)
+  })
+})
+
+describe('readBaseline', () => {
+  it('rejects a non-array baseline loudly', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vc-baseline-'))
+    try {
+      const path = join(dir, 'b.json')
+      writeFileSync(path, '{"not":"an array"}')
+      expect(() => readBaseline(path)).toThrow(/JSON array/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

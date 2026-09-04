@@ -1,0 +1,5173 @@
+Frozen fixture — snapshotted 2026-09-04 from landing-page origin/main (src/**/*.{ts,tsx,html,mdx}, 55 files, concatenated).
+// Root component — immediately.run renders the default export of this file.
+// Global CSS is imported HERE (not in main.tsx) because immediately.run's runtime
+// never loads main.tsx; anything the rendered tree needs must be reachable
+// from App.tsx.
+//
+// The whole public site lives in this one app, routed by PATH (see hooks/useRoute):
+// `/` · `/showcase` · `/apps` · `/docs/…` · `/tutorials/…` · `/changelog`. The shell (nav +
+// footer) is persistent; the active section fills the content region.
+//
+// The routes used to be hash-based, on the premise that "immediately.run serves a single
+// entry with no server to resolve sub-paths". That was already false: SANDBOX_ROUTING_SPEC
+// splits an outer URL into a platform-owned prefix and an APP-owned `sandboxPath`, and the
+// host mirrors the browser location into the sandbox on every navigation. The hash was
+// costing a real thing — a URL has exactly one fragment, the router had taken it, and so a
+// heading permalink had nowhere to point.
+import './index.css';
+import './App.css';
+import { useEffect } from 'react';
+import { useFragment, useRoute } from './hooks/useRoute';
+import { useFragmentScroll } from './hooks/useFragmentScroll';
+import Nav from './components/Nav';
+import Footer from './components/Footer';
+import { focusOmnibox } from './lib/omniboxFocus';
+import SectionErrorBoundary from './components/SectionErrorBoundary';
+import Home from './components/Home';
+import Apps from './sections/apps/Apps';
+import New from './sections/new/New';
+import Docs from './sections/docs/Docs';
+import Tutorials from './sections/tutorials/Tutorials';
+import Changelog from './sections/changelog/Changelog';
+
+function App() {
+  const route = useRoute();
+  // A deep link with a fragment has to land on its heading, and the browser's own scroll
+  // fires before the section renders. See the hook for what that looked like.
+  const fragment = useFragment();
+  useFragmentScroll(fragment, `${route.section}/${route.rest.join('/')}`);
+  // R3-512: ⌘K / Ctrl+K stays as a CONVENIENCE that focuses the omnibox — it
+  // is not the affordance (FRONT_DOOR_IA §5.4).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        focusOmnibox();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  return (
+    <>
+      <Nav active={route.section} />
+      <main className="wrap site-main" id="main" role="main">
+        {/* Keyed by section so a thrown section's error clears when you navigate. */}
+        <SectionErrorBoundary key={route.section}>
+          {route.section === 'home' && <Home />}
+          {route.section === 'apps' && <Apps />}
+          {route.section === 'new' && <New />}
+          {route.section === 'docs' && <Docs rest={route.rest} />}
+          {route.section === 'tutorials' && <Tutorials rest={route.rest} />}
+          {route.section === 'changelog' && <Changelog />}
+        </SectionErrorBoundary>
+      </main>
+      <Footer />
+    </>
+  );
+}
+
+export default App;
+
+import type { ReactNode } from 'react';
+import type { AppRecord } from '../data/apps';
+
+// The one app card. Three places render the same anatomy — the tiles on `/`, the
+// featured band at the top of /apps, and the /apps grid — and until now each
+// carried its own copy of it, which is how the three drifted apart in the first
+// place. The skeleton lives here once; the two contexts differ only in their
+// stylesheet's class vocabulary and in the chip and actions they hand in, so
+// neither one's appearance changes.
+//
+// `chip` and `actions` are slots rather than props on the record: /apps spells
+// its own chip copy, while `/` uses ProvenanceChip; both render their links
+// through PlatformLink. A card is a layout, not a link policy.
+
+/** Which stylesheet's class vocabulary to render in: `/`'s App.css or /apps's apps.css. */
+export type AppCardVariant = 'home' | 'directory';
+
+const CLASSES: Record<AppCardVariant, Record<string, string | undefined>> = {
+  home: {
+    card: 'app-card',
+    art: 'app-pic',
+    cat: 'cat',
+    body: 'app-foot',
+    name: undefined,
+    blurb: undefined,
+    cta: 'app-actions',
+  },
+  directory: {
+    card: 'apps-card',
+    art: 'apps-card-art',
+    cat: 'apps-card-cat',
+    body: 'apps-card-body',
+    name: 'apps-card-name',
+    blurb: 'apps-card-blurb',
+    cta: 'apps-card-cta',
+  },
+};
+
+interface AppCardProps {
+  app: AppRecord;
+  variant: AppCardVariant;
+  /** The provenance chip, in the calling context's own spelling. */
+  chip: ReactNode;
+  /** Open and Fork, built by the calling context's link component. */
+  actions: ReactNode;
+}
+
+function AppCard({ app, variant, chip, actions }: AppCardProps) {
+  const c = CLASSES[variant];
+  return (
+    <article className={c.card}>
+      <div className={c.art}>
+        <span className={c.cat}>{app.categoryLabel}</span>
+      </div>
+      <div className={c.body}>
+        <h3 className={c.name}>{app.name}</h3>
+        {chip}
+        <p className={c.blurb}>{app.blurb}</p>
+        <div className={c.cta}>{actions}</div>
+      </div>
+    </article>
+  );
+}
+
+export default AppCard;
+
+import type { AppRecord } from '../data/apps';
+import { presentRoute, editRoute } from '../lib/routes';
+import AppCard from './AppCard';
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+import ProvenanceChip from './ProvenanceChip';
+
+// The home page's app card: the shared AppCard skeleton in `/`'s class
+// vocabulary, with the chip and the two CTAs this context uses. Open and Fork
+// are platform routes, so they go through PlatformLink: host-space href +
+// frame-escaping navigation. Fork lives HERE, on tiles — never in the omnibox panel.
+
+interface AppTileProps {
+  app: AppRecord;
+}
+
+function AppTile({ app }: AppTileProps) {
+  return (
+    <AppCard
+      app={app}
+      variant="home"
+      chip={<ProvenanceChip provenance={app.provenance} />}
+      actions={
+        <>
+          <PlatformLink className="open" path={presentRoute(app.repo, app.entry)}>
+            Open
+          </PlatformLink>
+          <PlatformLink className="fork" path={editRoute(app.repo, app.entry)}>
+            Fork
+          </PlatformLink>
+        </>
+      }
+    />
+  );
+}
+
+export default AppTile;
+
+import SiteLink from './SiteLink';
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+import Door from './Door';
+import { revealHeroOmnibox } from '../lib/omniboxFocus';
+import { editRoute } from '../lib/routes';
+
+// The closing band (R3-514; FRONT_DOOR_IA §4.8): the headline and one row of
+// doors. "Run a repo" is the band's gradient primary and it scrolls to and
+// focuses the omnibox — the VIEW's one gradient primary is still the omnibox's
+// Run; only one of them is on screen at any scroll position. Everything else
+// here is hairline.
+
+function ClosingCta() {
+  return (
+    <section className="closing" aria-labelledby="closing">
+      <h2 id="closing" className="grad-text">
+        Run it. Find it. Make it.
+      </h2>
+      <div className="hero-ctas">
+        <button
+          type="button"
+          className="btn closing-run"
+          onClick={revealHeroOmnibox}
+        >
+          Run a repo →
+        </button>
+        <SiteLink className="btn-ghost" to="/apps">
+          Browse apps
+        </SiteLink>
+        <SiteLink className="btn-ghost" to="/new">
+          Make an app
+        </SiteLink>
+        <Door className="btn-ghost" />
+      </div>
+      {/* The fork line lives in the footer (PlatformLink there); the platform
+          route link below exists for readers who land here directly. */}
+      <p className="closing-fork">
+        <PlatformLink path={editRoute('landing-page')}>
+          view source · fork this page →
+        </PlatformLink>
+      </p>
+    </section>
+  );
+}
+
+export default ClosingCta;
+
+import { APPS, appsByRepo, TEASER_REPOS } from '../data/apps';
+import SiteLink from './SiteLink';
+import AppTile from './AppTile';
+
+// The directory teaser (R3-514; FRONT_DOOR_IA §4.6, renamed from
+// ShowcaseTeaser): the one directory's shop window on `/`. The count is
+// COMPUTED from APPS.length — never typed — and the four tiles are distinct
+// from the Run section's four (§4.3). Fork lives on the tiles (AppTile).
+
+const TEASER = appsByRepo(TEASER_REPOS);
+
+function DirectoryTeaser() {
+  return (
+    <section className="section" aria-labelledby="teaser">
+      <div className="sec-head">
+        <span className="tag">/APPS</span>
+        <h2 id="teaser">Built on immediately.run.</h2>
+        <SiteLink className="more" to="/apps">
+          See all {APPS.length} apps →
+        </SiteLink>
+      </div>
+      <div className="show-grid">
+        {TEASER.map((app) => (
+          <AppTile key={app.repo} app={app} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export default DirectoryTeaser;
+
+import { useAuth } from '@immediately-run/sdk';
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+
+// The door (R3-513; FRONT_DOOR_IA §6) — ONE element in the same position
+// everywhere it appears: nav right cluster, mobile top bar, mobile sheet,
+// closing band.
+//
+// The gate is `status === 'signed-in'`, NEVER `user`: the landing's capability
+// ceiling carries `auth:status` but not `auth:identity`, so the SDK redacts
+// `user` to `null` in this frame for everyone — a `Boolean(user)` gate (the
+// R3-486 defect) never renders on the host. `unknown` renders the signed-out
+// state, so nothing flashes while the host reports.
+//
+// No avatar and no sign-in are drawn here: neither is available to this frame,
+// and the landing never renders credential UI. The door hands the visitor to
+// `/home`, where the host draws its own sign-in posture when signed out. The
+// label is "Home" either way the state flips — the host's own signed-out
+// screen calls it Home, and "Your stuff" would promise recents that do not
+// exist yet (R-OSO-20/21).
+
+function Door({ className = 'door' }: { className?: string }) {
+  const { status } = useAuth();
+  const signedIn = status === 'signed-in';
+  return (
+    <PlatformLink className={className} path="/home">
+      {signedIn ? 'Home' : 'Sign in'}
+    </PlatformLink>
+  );
+}
+
+export default Door;
+
+import { editRoute } from '../lib/routes';
+import { GITHUB_APP_INSTALL_URL, SDK_REFERENCE_URL } from '../lib/urls';
+import SiteLink from './SiteLink';
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+
+// The footer (R3-513; FRONT_DOOR_IA §4.9): columns by AUDIENCE, not by section.
+// Product → readers; Build → creators; Contributors → the people inside the
+// platform. The engineering wiki lives ONLY here (never on /docs); the GitHub
+// org link lives only here since the nav dropped it.
+
+// The wiki is the docs repo rendered by Grove — a platform route, so it goes
+// through PlatformLink (host-space href, frame-escaping navigation).
+const WIKI_PATH = '/present/github/immediately-run/docs/main';
+
+function Footer() {
+  return (
+    <footer className="foot">
+      <div className="foot-inner">
+        <div className="foot-grid">
+          <div className="foot-signoff grad-text">
+            Go
+            <br />
+            build.
+          </div>
+          <div className="foot-col">
+            <div className="h">Product</div>
+            <div className="links">
+              <SiteLink to="/apps">Apps</SiteLink>
+              <SiteLink to="/docs">Docs</SiteLink>
+              <SiteLink to="/tutorials">Tutorials</SiteLink>
+              <SiteLink to="/changelog">What's new</SiteLink>
+            </div>
+          </div>
+          <div className="foot-col">
+            <div className="h">Build</div>
+            <div className="links">
+              <SiteLink to="/new">Make an app</SiteLink>
+              <a href={GITHUB_APP_INSTALL_URL} target="_blank" rel="noopener noreferrer">
+                Install the GitHub App
+              </a>
+              <a href={SDK_REFERENCE_URL} target="_blank" rel="noopener noreferrer">
+                API reference (generated)
+              </a>
+              <a
+                href="https://www.npmjs.com/package/@immediately-run/sdk"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                SDK on npm
+              </a>
+            </div>
+          </div>
+          <div className="foot-col">
+            <div className="h">Contributors</div>
+            <div className="links">
+              <PlatformLink path={WIKI_PATH}>Engineering wiki</PlatformLink>
+              <a href="https://github.com/immediately-run" target="_blank" rel="noopener noreferrer">
+                GitHub org
+              </a>
+              <SiteLink to="/docs/agents/llms">The machine surface</SiteLink>
+            </div>
+          </div>
+        </div>
+        <div className="foot-bottom">
+          <div className="foot-meta">
+            immediately.run — this site is Apache-2.0 and forkable · 2025–2026
+            <br />
+            set in Gabarito &amp; Space Mono
+          </div>
+          {/* Quiet forkability: this very page is itself a forkable app.
+              a platform route navigates the HOST document. */}
+          <PlatformLink className="foot-fork" path={editRoute('landing-page')}>
+            view source · fork this page →
+          </PlatformLink>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+export default Footer;
+
+import { useAuth } from '@immediately-run/sdk';
+import SiteLink from './SiteLink';
+import Omnibox from './Omnibox';
+import Door from './Door';
+
+// The hero (R3-514; FRONT_DOOR_IA §4.2) — the headline doubles as the omnibox
+// instruction; one deck for every breakpoint; the door row under the omnibox;
+// the proof line carries only verified facts. Desktop gets a STILL of the
+// first Run tile's app (the whiteboard) in present mode, aria-hidden —
+// deliberately not a live iframe, which would render the host inside its own
+// sandboxed app frame. The marquee and the fake browser-chrome preview are
+// gone.
+
+function Hero() {
+  // The door row prepends Home only when signed in; the gate is
+  // `status === 'signed-in'`, never `user` (§2/§6).
+  const { status } = useAuth();
+  return (
+    <header className="hero">
+      <div className="hero-grid">
+        <div className="hero-copy">
+          <span className="eyebrow">/RUN · FIND · MAKE</span>
+          <h1 className="grad-text">Paste a repo. Run the app.</h1>
+          <p className="deck">
+            immediately.run launches applications straight from their source, in your browser.
+            Nothing to install, no account to make, and an app reaches nothing of yours unless
+            you hand it over.
+          </p>
+          <Omnibox variant="hero" />
+          <div className="hero-doors">
+            {status === 'signed-in' && (
+              <Door className="btn-ghost hero-door" />
+            )}
+            <SiteLink className="btn-ghost hero-door" to="/apps">
+              Browse apps →
+            </SiteLink>
+            <SiteLink className="btn-ghost hero-door" to="/new">
+              Make an app →
+            </SiteLink>
+          </div>
+          <div className="proof">
+            <span>0 installs</span>
+            <span aria-hidden="true">·</span>
+            <span>runs in your browser</span>
+            <span aria-hidden="true">·</span>
+            <span>sandboxed by default</span>
+          </div>
+        </div>
+
+        {/* A still of the first Run tile's app in present mode — decoration, not
+            a control; nothing in it is live or interactive. */}
+        <div className="hero-still" aria-hidden="true">
+          <svg viewBox="0 0 320 260" preserveAspectRatio="xMidYMid meet" role="presentation">
+            <rect x="8" y="8" width="304" height="244" rx="10" fill="var(--panel)" stroke="var(--line-2)" />
+            <path
+              d="M60 150 C110 90, 170 190, 250 100"
+              fill="none"
+              stroke="var(--accent-2)"
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+            <circle cx="60" cy="150" r="6" fill="var(--accent)" />
+            <circle cx="250" cy="100" r="6" fill="var(--accent-3)" />
+            <text x="24" y="232" fontFamily="var(--mono)" fontSize="12" fill="var(--ink-3)">
+              whiteboard · /present
+            </text>
+          </svg>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+export default Hero;
+
+import Hero from './Hero';
+import RunSection from './RunSection';
+import PublishSection from './PublishSection';
+import RemixSection from './RemixSection';
+import DirectoryTeaser from './DirectoryTeaser';
+import WhatsNew from './WhatsNew';
+import ClosingCta from './ClosingCta';
+
+// The landing/home route (R3-514): the three product messages in weight order —
+// instant safe launch (Run), free controlled publishing (Publish), everything
+// remixable (Remix) — then the directory teaser, what's new, and the closing
+// doors. The consumer message leads; the author message is the second section,
+// not a second hero (product_bet §5, FRONT_DOOR_IA §1.1).
+
+function Home() {
+  return (
+    <div className="home-fade">
+      <Hero />
+      <RunSection />
+      <PublishSection />
+      <RemixSection />
+      <DirectoryTeaser />
+      <WhatsNew />
+      <ClosingCta />
+    </div>
+  );
+}
+
+export default Home;
+
+import { useState } from 'react';
+import { Search } from 'lucide-react';
+import { useTheme } from '../hooks/useTheme';
+import type { Section } from '../hooks/useRoute';
+import logoMark from '../assets/logo-mark.png';
+import SiteLink from './SiteLink';
+import Omnibox from './Omnibox';
+import Door from './Door';
+
+// The nav (R3-513; FRONT_DOOR_IA §4.1): four items — Apps · Docs · Tutorials ·
+// What's new. Showcase is gone (one directory: /showcase redirects to /apps);
+// the GitHub org link moved to the footer; "Start building" became "Make an
+// app" → /new as a hairline secondary. The right cluster is the omnibox (nav
+// variant), Make an app, and the door — no gradient primary in the nav: the
+// view's one primary is the omnibox's Run.
+//
+// Mobile top bar: logo · search icon · the door · burger — the two controls
+// outside the burger are the two fastest paths for the majority returning case
+// (W1/W2 and W4). The sheet opens with the omnibox row at its top.
+
+// Section links. The whole site lives in this one app, routed by path.
+const NAV_ITEMS: { label: string; to: string; section: Section }[] = [
+  { label: 'Apps', to: '/apps', section: 'apps' },
+  { label: 'Docs', to: '/docs', section: 'docs' },
+  { label: 'Tutorials', to: '/tutorials', section: 'tutorials' },
+  { label: "What's new", to: '/changelog', section: 'changelog' },
+];
+
+interface NavProps {
+  active: Section;
+}
+
+function Nav({ active }: NavProps) {
+  const { theme, toggle } = useTheme();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const isLight = theme === 'light';
+
+  const closeMenu = () => setMenuOpen(false);
+
+  return (
+    <>
+      <nav className="nav" aria-label="Primary">
+        <div className="nav-inner">
+          <SiteLink className="logo" to="/">
+            <img className="logo-mark" src={logoMark} alt="" width={27} height={27} />
+            immediately.run
+          </SiteLink>
+          <div className="nav-links">
+            {NAV_ITEMS.map((item) => (
+              <SiteLink
+                key={item.to}
+                className={`nav-link${active === item.section ? ' nav-link--active' : ''}`}
+                to={item.to}
+                aria-current={active === item.section ? 'page' : undefined}
+              >
+                {item.label}
+              </SiteLink>
+            ))}
+          </div>
+          <div className="nav-right">
+            {/* R3-512: the omnibox in its `nav` variant. On `/` it renders as the
+                shortcut that focuses the hero omnibox; elsewhere it is the field. */}
+            <span className="nav-omnibox desk-only">
+              <Omnibox variant="nav" heroShortcut={active === 'home'} />
+            </span>
+            {/* Mobile search: opens the sheet, whose first row is the omnibox. */}
+            <button
+              type="button"
+              className="icon-btn nav-search-btn"
+              onClick={() => setMenuOpen(true)}
+              aria-label="Search apps and docs, or paste a repo"
+            >
+              <Search size={18} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="icon-btn theme-btn"
+              onClick={toggle}
+              aria-label={isLight ? 'Switch to dark theme' : 'Switch to light theme'}
+            >
+              <span className="ic">{isLight ? '☾' : '☀'}</span>
+              <span className="desk-only">{isLight ? 'Dark' : 'Light'}</span>
+            </button>
+            {/* Make an app: a hairline secondary — /new is an app-owned route
+                (R3-515 builds the page; the route resolves to the site root
+                until then). NEVER the gradient primary (FRONT_DOOR_IA §1.1). */}
+            <SiteLink className="nav-link nav-make desk-only" to="/new">
+              Make an app
+            </SiteLink>
+            {/* The door stays in the top bar at every width — it is one of the
+                two controls outside the burger (§4.1), not a desktop extra. */}
+            <span className="nav-door">
+              <Door />
+            </span>
+            <button
+              type="button"
+              className="burger"
+              onClick={() => setMenuOpen(true)}
+              aria-label="Open menu"
+            >
+              ≡
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {menuOpen && (
+        <div className="nav-sheet">
+          <div className="nav-sheet-top">
+            <span>immediately.run</span>
+            <button
+              type="button"
+              className="sheet-close"
+              onClick={closeMenu}
+              aria-label="Close menu"
+            >
+              ×
+            </button>
+          </div>
+          {/* The omnibox row comes FIRST in the sheet (§4.1). */}
+          <div className="nav-sheet-omnibox">
+            <Omnibox variant="nav" heroShortcut={false} />
+          </div>
+          <div className="nav-sheet-links">
+            {NAV_ITEMS.map((item) => (
+              <SiteLink
+                key={item.to}
+                className="nav-sheet-link"
+                to={item.to}
+                onClick={closeMenu}
+              >
+                {item.label}
+              </SiteLink>
+            ))}
+            <SiteLink className="nav-sheet-link" to="/new" onClick={closeMenu}>
+              Make an app
+            </SiteLink>
+          </div>
+          <div className="nav-sheet-door">
+            <Door />
+          </div>
+          <button
+            type="button"
+            className="nav-sheet-theme"
+            onClick={toggle}
+            aria-label={isLight ? 'Switch to dark theme' : 'Switch to light theme'}
+          >
+            {isLight ? '☾ Dark' : '☀ Light'}
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default Nav;
+
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import './omnibox.css';
+import { parseLaunch, PROVIDERS, type Launch } from '../lib/launch';
+import { APPS, type Provenance } from '../data/apps';
+import { CORPUS_INDEX } from '../data/corpusIndex';
+import ProvenanceChip from './ProvenanceChip';
+import SiteLink from './SiteLink';
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+import { presentRoute } from '../lib/routes';
+import { focusHeroOmnibox, registerOmniboxFocus } from '../lib/omniboxFocus';
+import type { OmniboxVariant } from '../lib/omniboxFocus';
+
+// The omnibox (R3-512; FRONT_DOOR_IA §5) — the front door's primary control. It
+// does W1 (run a repo by URL or tuple) and W2 (find an app) in one place, as a
+// WAI-ARIA list-autocomplete combobox with three result groups of ONE action per
+// row. Run and Open rows render through `PlatformLink`, which resolves the
+// host-space href and escapes the frame: a platform route navigates the HOST
+// document, and a root-relative href inside the sandboxed frame would resolve
+// against the sandbox origin and land nowhere.
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia(query).matches
+      : false,
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(query);
+    const onChange = () => setMatches(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
+
+/* ── search over the directory and the corpus ──────────────────────────── */
+
+interface AppHit {
+  key: string;
+  name: string;
+  category: string;
+  blurb: string;
+  repo: string;
+  provenance: Provenance;
+}
+
+/** name-prefix > name-substring > repo > blurb > category (FRONT_DOOR_IA §5.3). */
+function appScore(hit: AppHit, q: string): number {
+  if (hit.name.toLowerCase().startsWith(q)) return 4;
+  if (hit.name.toLowerCase().includes(q)) return 3;
+  if (hit.repo.toLowerCase().includes(q)) return 2;
+  if (hit.blurb.toLowerCase().includes(q)) return 1;
+  if (hit.category.toLowerCase().includes(q)) return 0;
+  return -1;
+}
+
+interface CorpusHit {
+  key: string;
+  title: string;
+  lead: string;
+  /** In-site route, e.g. `/docs/start/overview` or `/tutorials/your-first-app`. */
+  to: string;
+}
+
+function corpusHits(q: string): CorpusHit[] {
+  const hits: CorpusHit[] = [];
+  for (const entry of CORPUS_INDEX) {
+    const title = String(entry.frontmatter.title ?? '');
+    const lead = String(entry.frontmatter.lead ?? '');
+    if (!title.toLowerCase().includes(q) && !lead.toLowerCase().includes(q)) continue;
+    let to: string;
+    if (entry.path.startsWith('docs/')) {
+      const [group, slug] = entry.slug.split('--');
+      to = `/docs/${group}/${slug}`;
+    } else {
+      to = `/${entry.path.replace(/\.mdx$/, '')}`;
+    }
+    hits.push({ key: entry.path, title, lead, to });
+    if (hits.length >= 5) break; // at most five rows
+  }
+  return hits;
+}
+
+/* ── the component ──────────────────────────────────────────────────────── */
+
+interface OmniboxProps {
+  variant: OmniboxVariant;
+  /** Nav variant only: true while the hero omnibox is mounted (`/`), so the
+   *  nav field renders as the shortcut that focuses it. Derived by the caller
+   *  from the route — render-time data, not an effect. */
+  heroShortcut?: boolean;
+}
+
+function Omnibox({ variant, heroShortcut = false }: OmniboxProps) {
+  const isMobile = useMediaQuery('(max-width: 720px)');
+  const [query, setQuery] = useState('');
+  const [highlight, setHighlight] = useState(-1);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const outerRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  const inputId = `${listId}-input`;
+  const helperId = useId();
+  const noticeId = useId();
+
+  const parsed: Launch = useMemo(() => parseLaunch(query), [query]);
+  const runnable = parsed.kind === 'location' || parsed.kind === 'platform-url';
+  const runPath =
+    parsed.kind === 'location'
+      ? parsed.presentPath
+      : parsed.kind === 'platform-url'
+        ? parsed.path
+        : undefined;
+
+  const panelOpen = query.trim() !== '';
+
+  // Adjusting state during render (the sanctioned pattern): the highlight must
+  // not survive the option set changing under it, and an effect would cascade.
+  const [prevQuery, setPrevQuery] = useState(query);
+  if (prevQuery !== query) {
+    setPrevQuery(query);
+    setHighlight(-1);
+  }
+
+  // Unknown provider → the notice replaces the helper line's text and is
+  // announced through the live region.
+  const notice =
+    parsed.kind === 'unknown-provider'
+      ? `${parsed.provider.charAt(0).toUpperCase()}${parsed.provider.slice(1)} is not supported yet. GitHub works today.`
+      : '';
+
+  const helper =
+    variant === 'new' ? 'the repo you just created' : 'Accepts provider:namespace/repository@ref · GitHub is the first provider';
+
+  const appHits = useMemo(() => {
+    if (!panelOpen) return [];
+    const q = query.trim().toLowerCase();
+    return APPS.map((a) => ({
+      key: a.repo,
+      name: a.name,
+      category: a.categoryLabel,
+      blurb: a.blurb,
+      repo: a.repo,
+      provenance: a.provenance,
+    }))
+      .map((hit) => ({ hit, score: appScore(hit, q) }))
+      .filter(({ score }) => score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .map(({ hit }) => hit);
+  }, [panelOpen, query]);
+
+  const docHits = useMemo(() => (panelOpen ? corpusHits(query.trim().toLowerCase()) : []), [panelOpen, query]);
+
+  const locationRow = parsed.kind === 'location' ? parsed : undefined;
+  const hasResults = Boolean(locationRow) || appHits.length > 0 || docHits.length > 0;
+
+  // Flattened options, in group order — the arrow-key walk and the highlight id
+  // both read this list.
+  const options = useMemo(() => {
+    const list: { id: string; label: string }[] = [];
+    if (locationRow) list.push({ id: `${listId}-opt-location`, label: locationRow.display });
+    for (const hit of appHits) list.push({ id: `${listId}-opt-${hit.key}`, label: hit.name });
+    for (const hit of docHits) list.push({ id: `${listId}-opt-doc-${hit.key}`, label: hit.title });
+    return list;
+  }, [locationRow, appHits, docHits, listId]);
+
+  // Register with the focus registry (⌘K, the nav shortcut and the "paste a repo"
+  // CTAs all land here). `reveal` is what lets those CTAs scroll this field into
+  // view without any component querying for its CSS class.
+  useEffect(
+    () =>
+      registerOmniboxFocus(variant, {
+        focus: () => inputRef.current?.focus(),
+        reveal: () => outerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+      }),
+    [variant],
+  );
+
+  const onKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (!panelOpen || options.length === 0) return;
+        e.preventDefault();
+        setHighlight((h) => {
+          if (h === -1) return e.key === 'ArrowDown' ? 0 : options.length - 1;
+          return (h + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+        });
+        return;
+      }
+      if (e.key === 'Enter') {
+        if (highlight >= 0 && highlight < options.length) {
+          e.preventDefault();
+          document.getElementById(options[highlight].id)?.click();
+          return;
+        }
+        if (runnable) {
+          e.preventDefault();
+          document.getElementById(`${listId}-run`)?.click();
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        // Close the panel, then clear the highlight, then blur — in that order.
+        setQuery('');
+        setHighlight(-1);
+        inputRef.current?.blur();
+      }
+    },
+    [panelOpen, options, highlight, runnable, listId],
+  );
+
+  const chip = (
+    <span className="omnibox-chip" aria-hidden={Object.keys(PROVIDERS).length === 1 || undefined}>
+      {Object.keys(PROVIDERS).length === 1 ? (
+        // One provider: a static label with no caret — NOT a dropdown of
+        // providers that do not exist.
+        <span className="omnibox-chip-label">github</span>
+      ) : (
+        <select className="omnibox-chip-select" aria-label="Provider">
+          {Object.keys(PROVIDERS).map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      )}
+    </span>
+  );
+
+  const run = runPath !== undefined ? (
+    <PlatformLink
+      id={`${listId}-run`}
+      className="omnibox-run"
+      path={runPath}
+      aria-label="Run"
+    >
+      <span className="omnibox-run-label">Run</span>
+      <span className="omnibox-run-arrow" aria-hidden="true">
+        →
+      </span>
+    </PlatformLink>
+  ) : (
+    <button
+      id={`${listId}-run`}
+      type="button"
+      className="omnibox-run"
+      aria-disabled="true"
+      aria-describedby={`${helperId} ${noticeId}`}
+      onClick={(e) => e.preventDefault()}
+    >
+      <span className="omnibox-run-label">Run</span>
+      <span className="omnibox-run-arrow" aria-hidden="true">
+        →
+      </span>
+    </button>
+  );
+
+  const field = (
+    <div className={`omnibox omnibox--${variant}`}>
+      <div className="omnibox-row">
+        {chip}
+        <input
+          ref={inputRef}
+          id={inputId}
+          className="omnibox-input"
+          type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={panelOpen}
+          aria-controls={panelOpen ? listId : undefined}
+          aria-activedescendant={highlight >= 0 ? options[highlight]?.id : undefined}
+          aria-describedby={`${helperId} ${noticeId}`}
+          aria-invalid={notice ? true : undefined}
+          placeholder={isMobile ? 'Paste a repo or an app name' : 'owner/repo@branch, a GitHub URL, or an app name'}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onKeyDown}
+        />
+        {run}
+      </div>
+      <p className="omnibox-helper" id={helperId}>
+        {notice || helper}
+      </p>
+      {/* The live region announces the notice; empty in the common case. */}
+      <p className="omnibox-visually-hidden" id={noticeId} aria-live="polite">
+        {notice}
+      </p>
+      {panelOpen && (
+        <div className="omnibox-panel" id={listId} role="listbox" aria-label="Results">
+          {hasResults ? (
+            <>
+              {locationRow && (
+                <div className="omnibox-group" role="group" aria-label="Run from source">
+                  <PlatformLink
+                    id={`${listId}-opt-location`}
+                    className="omnibox-option"
+                    role="option"
+                    aria-selected={highlight === 0}
+                    path={locationRow.presentPath}
+                  >
+                    <span className="omnibox-option-name">{locationRow.display}</span>
+                    <span className="omnibox-option-action">Run</span>
+                  </PlatformLink>
+                </div>
+              )}
+              {appHits.length > 0 && (
+                <div className="omnibox-group" role="group" aria-label="Apps in the directory">
+                  {appHits.map((hit) => {
+                    const idx = options.findIndex((o) => o.id === `${listId}-opt-${hit.key}`);
+                    return (
+                      <PlatformLink
+                        key={hit.key}
+                        id={`${listId}-opt-${hit.key}`}
+                        className="omnibox-option"
+                        role="option"
+                        aria-selected={highlight === idx}
+                        path={presentRoute(hit.repo)}
+                      >
+                        <span className="omnibox-option-name">{hit.name}</span>
+                        <span className="omnibox-option-cat">{hit.category}</span>
+                        <span className="omnibox-option-blurb">{hit.blurb}</span>
+                        <ProvenanceChip provenance={hit.provenance} />
+                      </PlatformLink>
+                    );
+                  })}
+                </div>
+              )}
+              {docHits.length > 0 && (
+                <div className="omnibox-group" role="group" aria-label="Docs and tutorials">
+                  {docHits.map((hit) => {
+                    const idx = options.findIndex((o) => o.id === `${listId}-opt-doc-${hit.key}`);
+                    return (
+                      <SiteLink
+                        key={hit.key}
+                        id={`${listId}-opt-doc-${hit.key}`}
+                        className="omnibox-option"
+                        role="option"
+                        aria-selected={highlight === idx}
+                        to={hit.to}
+                      >
+                        <span className="omnibox-option-name">{hit.title}</span>
+                        <span className="omnibox-option-blurb">{hit.lead}</span>
+                      </SiteLink>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="omnibox-empty">Nothing matched. Try an app name, or paste a repo.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  // The nav variant collapses to a shortcut button while the hero omnibox is
+  // mounted (on `/`): activating it focuses the hero field. On every other
+  // route the field expands in place.
+  if (variant === 'nav' && heroShortcut) {
+    return (
+      <button
+        type="button"
+        className="omnibox-nav-button"
+        onClick={() => focusHeroOmnibox()}
+        aria-label="Search apps and docs, or paste a repo"
+      >
+        <span className="omnibox-nav-button-label">Search</span>
+        <span className="kbd">⌘K</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className={`omnibox-outer omnibox-outer--${variant}`} ref={outerRef}>
+      <label className="omnibox-visually-hidden" htmlFor={inputId}>
+        Paste a repo, or search apps and docs
+      </label>
+      {field}
+    </div>
+  );
+}
+
+export default Omnibox;
+
+import type { Provenance } from '../data/apps';
+
+interface ProvenanceChipProps {
+  provenance: Provenance;
+}
+
+// Trust signal, not decoration: first-party apps read "official"; community apps
+// show their verified GitHub identity as "by @github:owner".
+function ProvenanceChip({ provenance }: ProvenanceChipProps) {
+  if (provenance === 'official') {
+    return <span className="prov official">official</span>;
+  }
+  return <span className="prov github">by @github:{provenance.github}</span>;
+}
+
+export default ProvenanceChip;
+
+import SiteLink from './SiteLink';
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+import { revealHeroOmnibox } from '../lib/omniboxFocus';
+import { GITHUB_APP_INSTALL_URL } from '../lib/urls';
+
+// The Publish section (R3-514; FRONT_DOOR_IA §4.4) — M2, the author message,
+// second in weight. The lede is verbatim from the brief because it carries the
+// TWO conditions of the private-repo claim: the reader must sign in, and the
+// GitHub App must be installed on the repo. The install row is dashed with a
+// mono GITHUB APP label. The one agent-mentioning sentence on `/` is this
+// section's closing line, and it points at a tutorial, not at an agent.
+
+const GROVE_EXAMPLE = '/present/github/immediately-run/grove/main';
+
+function PublishSection() {
+  return (
+    <section className="section" aria-labelledby="publish">
+      <div className="sec-head">
+        <span className="tag">/PUBLISH</span>
+        <h2 id="publish">Publish by pushing. Keep the keys.</h2>
+        <p className="lede">
+          An app is a React and TypeScript repo. Push it and it is live. There is no build to
+          host and no server to run, so publishing is free. Who can run it is who can read the
+          repo: make it private and it runs only for people who can read it on GitHub, once
+          they sign in.
+        </p>
+      </div>
+
+      <div className="publish-cards">
+        <div className="cap">
+          <div className="t">Blank app</div>
+          <p>A minimal React and TypeScript repo with nothing to delete first.</p>
+          <SiteLink className="btn-ghost publish-cta" to="/new">
+            Start from blank →
+          </SiteLink>
+        </div>
+        <div className="cap">
+          <div className="t">Wiki, on Grove</div>
+          <p>A wiki that is a folder of markdown files, rendered by Grove.</p>
+          <PlatformLink className="btn-ghost publish-cta" path={GROVE_EXAMPLE}>
+            Try it live →
+          </PlatformLink>
+        </div>
+        <div className="cap">
+          <div className="t">Run what you have</div>
+          <p>Conventional React and TypeScript runs unmodified — paste a repo and go.</p>
+          <button
+            type="button"
+            className="btn-ghost publish-cta"
+            onClick={revealHeroOmnibox}
+          >
+            Paste a repo →
+          </button>
+        </div>
+      </div>
+
+      <div className="publish-install">
+        <span className="publish-install-label">GITHUB APP</span>
+        <p className="publish-install-copy">
+          Install the immediately.run GitHub App to create and publish. Running public apps
+          needs no install.
+        </p>
+        <a className="btn-ghost publish-cta" href={GITHUB_APP_INSTALL_URL} target="_blank" rel="noopener noreferrer">
+          Install the app →
+        </a>
+      </div>
+
+      <p className="publish-closing">
+        Made something with a coding agent? This is where it goes live.{' '}
+        <SiteLink to="/tutorials/your-first-app">Publish an app by pushing a repo →</SiteLink>
+      </p>
+    </section>
+  );
+}
+
+export default PublishSection;
+
+import SiteLink from './SiteLink';
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+import { editRoute } from '../lib/routes';
+
+// The Remix section (R3-514; FRONT_DOOR_IA §4.5) — M3, the shortest section:
+// the consequence of M1's sandbox (modification resets trust), not a separate
+// pitch. Fork this page is a platform route (PlatformLink); the contributing
+// link targets a stable heading in the docs. The illustration slot is
+// decorative — the running app beside its source, one edit reflected in both.
+
+function RemixSection() {
+  return (
+    <section className="section" aria-labelledby="remix">
+      <div className="sec-head">
+        <span className="tag">/REMIX</span>
+        <h2 id="remix">Every app is yours to fork.</h2>
+        <p className="lede">
+          Open the source of anything you run, including this page. Change it in the editor;
+          edits stay in your copy until you push them back as a commit or a pull request. A
+          fork starts with no permissions of its own, so a changed app has to earn them again.
+        </p>
+      </div>
+      <div className="hero-ctas">
+        <PlatformLink className="btn-ghost" path={editRoute('landing-page')}>
+          Fork this page →
+        </PlatformLink>
+        <SiteLink className="btn-ghost" to="/docs/start/overview#the-run-edit-contribute-loop">
+          How contributing works →
+        </SiteLink>
+      </div>
+      <div className="remix-still" aria-hidden="true">
+        <svg viewBox="0 0 360 120" preserveAspectRatio="xMidYMid meet" role="presentation">
+          <rect x="8" y="8" width="160" height="104" rx="8" fill="var(--panel)" stroke="var(--line-2)" />
+          <path d="M24 90 L60 60 L96 78 L150 34" fill="none" stroke="var(--accent-2)" strokeWidth="2.5" strokeLinecap="round" />
+          <rect x="192" y="8" width="160" height="104" rx="8" fill="var(--panel)" stroke="var(--line-2)" />
+          <path d="M208 90 L244 60 L280 78 L334 34" fill="none" stroke="var(--accent-3)" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="6 6" />
+          <text x="208" y="30" fontFamily="var(--mono)" fontSize="11" fill="var(--ink-3)">one edit → both sides</text>
+        </svg>
+      </div>
+    </section>
+  );
+}
+
+export default RemixSection;
+
+// @vitest-environment jsdom
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
+import RunSection from './RunSection';
+import { RUN_TILE_REPOS } from '../data/apps';
+
+// WORKBENCH_MODES_SPEC §4 ("Taught once") — the front door's Run section carries
+// the spec's two sentences verbatim, owner-confirmed wording: the tab proves a
+// published app; platform surfaces name themselves and open the platform menu.
+const TAB_SENTENCE = 'The pull-down tab means you are looking at an app someone published.';
+const PLATFORM_SENTENCE =
+  'Platform surfaces carry the immediately.run name and open the platform menu.';
+
+afterEach(cleanup);
+
+describe('RunSection (the /RUN taught cue)', () => {
+  it('teaches the two sentences once, inside the /RUN section', () => {
+    const { container } = render(<RunSection />);
+    const section = screen.getByRole('region');
+    const cue = container.querySelector('p.run-cue');
+    expect(cue).not.toBeNull();
+    expect(section.contains(cue)).toBe(true);
+    expect(cue?.textContent).toBe(`${TAB_SENTENCE} ${PLATFORM_SENTENCE}`);
+    for (const sentence of [TAB_SENTENCE, PLATFORM_SENTENCE]) {
+      expect(container.textContent?.split(sentence).length - 1).toBe(1);
+    }
+  });
+
+  it('renders the four tiles from the real RUN_TILE_REPOS selection', () => {
+    const { container } = render(<RunSection />);
+    const grid = container.querySelector('.show-grid');
+    expect(grid?.children).toHaveLength(RUN_TILE_REPOS.length);
+    expect(grid?.querySelector('a[href^="/present/github/"][href*="/whiteboard/"]')).not.toBeNull();
+  });
+});
+
+import { appsByRepo, RUN_TILE_REPOS } from '../data/apps';
+import AppTile from './AppTile';
+
+// The Run section (R3-514; FRONT_DOOR_IA §4.3) — M1's proof. The sandbox is not
+// a topic beside "instant"; it is what makes instant safe, and placing the
+// claim next to four real Open buttons is the proof. Four live tiles chosen
+// for range and mobile-friendliness, whiteboard first; the three capability
+// cards are kept from the old Safety section, tightened.
+
+const RUN_APPS = appsByRepo(RUN_TILE_REPOS);
+
+function RunSection() {
+  return (
+    <section className="section" aria-labelledby="run">
+      <div className="sec-head">
+        <span className="tag">/RUN</span>
+        <h2 id="run">Nothing to install. Nothing to trust first.</h2>
+        <p className="lede">
+          Every app runs in a sandboxed frame that starts with nothing: no files, no network, no
+          keys. It gets exactly what you grant, when you grant it, and you can take that back. So
+          clicking costs you nothing, whoever wrote the app.
+        </p>
+        <p className="run-cue">
+          The pull-down tab means you are looking at an app someone published. Platform surfaces
+          carry the immediately.run name and open the platform menu.
+        </p>
+      </div>
+      <div className="show-grid">
+        {RUN_APPS.map((app) => (
+          <AppTile key={app.repo} app={app} />
+        ))}
+      </div>
+      <div className="cap-grid">
+        <div className="cap">
+          <div className="k">files</div>
+          <div className="t">Mount, don't roam.</div>
+          <p>An app sees only the folder you mount — never the rest of your disk.</p>
+        </div>
+        <div className="cap">
+          <div className="k">network</div>
+          <div className="t">Ask before reaching out.</div>
+          <p>Every fetch to a new origin is a capability you consent to, once.</p>
+        </div>
+        <div className="cap">
+          <div className="k">keys</div>
+          <div className="t">Use a key, never read it.</div>
+          <p>
+            An app can <b className="key">use</b> your API key to make a call — it can never see
+            the value.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export default RunSection;
+
+import { Component, type ErrorInfo, type ReactNode } from 'react';
+import SiteLink from './SiteLink';
+
+interface Props {
+  children: ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+}
+
+// Route-level error boundary for the content region (brief 01, "section-failed"
+// state). If a section throws while rendering, the shell stays put and we draw a
+// friendly inline card instead of a blank frame. In App.tsx this is keyed by the
+// active section, so navigating to another section remounts it and clears the
+// error — and the in-card links do exactly that.
+class SectionErrorBoundary extends Component<Props, State> {
+  state: State = { hasError: false };
+
+  static getDerivedStateFromError(): State {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    // Surface it for debugging; the user still gets the recovery card.
+    console.error('Section failed to render:', error, info.componentStack);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+
+    return (
+      <div className="section-error" role="alert">
+        <h2 className="section-error__title">This section didn't load.</h2>
+        <p className="section-error__body">Reload it, or head to the showcase.</p>
+        <div className="section-error__actions">
+          <button
+            type="button"
+            className="section-error__btn section-error__btn--primary"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+          <SiteLink className="section-error__btn" to="/showcase">
+            Go to showcase
+          </SiteLink>
+          <SiteLink className="section-error__btn" to="/">
+            Back home
+          </SiteLink>
+        </div>
+      </div>
+    );
+  }
+}
+
+export default SectionErrorBoundary;
+
+// The site's internal link. Every in-site navigation goes through this.
+//
+// It renders a REAL href — an absolute host URL on immediately.run, a plain path locally —
+// so copy-link, middle-click and open-in-new-tab all produce something that resolves for
+// another reader. The click is intercepted and routed instead, because a full page load to
+// the URL you are already on is not navigation.
+//
+// Modified clicks (cmd/ctrl/shift/alt, middle button) and an explicit `target` are left to
+// the browser: those gestures MEAN "open the href", and the href is exactly right.
+//
+// This is the SDK's own `Link` contract, reimplemented for one reason: `Link` builds hrefs
+// with the `files/` prefix and offers no way to opt out, and the site's routes are routes
+// rather than files. The interception semantics are copied deliberately, including the trap
+// the SDK's own comment records — spread props FIRST, so a caller's `onClick` composes with
+// the interception instead of silently replacing it.
+
+import { useCallback } from 'react';
+import type { AnchorHTMLAttributes, MouseEvent, ReactNode } from 'react';
+import { hrefFor, navigateTo } from '../lib/navigation';
+import { useHostLocation } from '../hooks/useRoute';
+
+export default function SiteLink({
+  to,
+  children,
+  onClick,
+  target,
+  ...rest
+}: { to: string; children?: ReactNode } & Omit<
+  AnchorHTMLAttributes<HTMLAnchorElement>,
+  'href'
+>) {
+  const loc = useHostLocation();
+  const href = hrefFor(loc, to);
+
+  const clickHandler = useCallback(
+    (e: MouseEvent<HTMLAnchorElement>) => {
+      onClick?.(e);
+      if (e.defaultPrevented) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      if (target && target !== '_self') return;
+      e.preventDefault();
+      navigateTo(loc, to);
+    },
+    [loc, onClick, target, to],
+  );
+
+  return (
+    <a {...rest} href={href} target={target} onClick={clickHandler}>
+      {children}
+    </a>
+  );
+}
+
+import { BADGE_LABEL, CHANGELOG } from '../sections/changelog/data';
+import SiteLink from './SiteLink';
+
+// The single latest changelog entry as a one-liner, linking to /changelog.
+//
+// This reads the CHANGELOG itself rather than a parallel list. It used to read a
+// second data module (`data/news.ts`) that carried its own copy of the newest few
+// entries — two homes for one fact, which drifted: the two files disagreed about
+// what the latest entry even was. One home (ways_of_working §9); the teaser is a
+// projection of it.
+function WhatsNew() {
+  const latest = CHANGELOG[0];
+  if (!latest) return null;
+
+  return (
+    <section className="section" aria-label="What's new">
+      <SiteLink className="news-row" to="/changelog">
+        <span className="ntag">/NEWS</span>
+        <span className={`badge ${latest.kind}`}>{BADGE_LABEL[latest.kind]}</span>
+        <span className="news-msg">{latest.message}</span>
+        <span className="news-date">{latest.date} · full changelog →</span>
+      </SiteLink>
+    </section>
+  );
+}
+
+export default WhatsNew;
+
+// The MDX `<ApiSignature>` — one SDK method: signature, the capability it needs, its
+// parameters, what it returns, and how it can reject.
+//
+// Params and rejections stay STRUCTURED (JSX expression props) rather than becoming prose.
+// They are tabular data with a fixed shape that the machine surface also reads; turning them
+// into paragraphs would be the mistake the conversion is meant to avoid, in the other
+// direction. MDX is for the prose around them.
+
+import SiteLink from '../components/SiteLink';
+
+export interface ApiParam {
+  name: string;
+  type: string;
+  desc: string;
+}
+
+export interface ApiRejection {
+  code: string;
+  meaning: string;
+}
+
+export default function ApiSignature({
+  id,
+  sig,
+  cap,
+  capHref,
+  params = [],
+  returns,
+  rejections = [],
+}: {
+  id?: string;
+  toc?: string;
+  sig?: string;
+  cap?: string;
+  capHref?: string;
+  params?: ApiParam[];
+  returns?: string;
+  rejections?: ApiRejection[];
+}) {
+  return (
+    <div className="docs-api" id={id}>
+      <div className="docs-api-head">
+        <code className="docs-api-sig">{sig}</code>
+        <div>
+          <SiteLink className="docs-cap-chip" to={(capHref ?? '').replace(/^#/, '')}>
+            Requires the {cap} capability
+          </SiteLink>
+        </div>
+      </div>
+      <div className="docs-api-body">
+        {params.length > 0 && (
+          <>
+            <div className="docs-api-label">Parameters</div>
+            {params.map((p) => (
+              <div className="docs-param" key={p.name}>
+                <div>
+                  <code className="docs-param-name">{p.name}</code>
+                  <div className="docs-param-type">{p.type}</div>
+                </div>
+                <div className="docs-param-desc">{p.desc}</div>
+              </div>
+            ))}
+          </>
+        )}
+        <div className="docs-api-label docs-api-label--mt">Returns</div>
+        <div className="docs-returns">{returns}</div>
+        <div className="docs-api-label docs-api-label--mt">Rejection codes</div>
+        {rejections.map((r) => (
+          <div className="docs-reject" key={r.code}>
+            <code className="docs-reject-code">{r.code}</code>
+            <span className="docs-reject-meaning">{r.meaning}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// The MDX `<Callout>` — the same markup the typed-block renderer produced, so the
+// conversion from `data.ts` to MDX is a change of SOURCE, not of appearance.
+
+import type { ReactNode } from 'react';
+
+export default function Callout({
+  tone = 'note',
+  title,
+  children,
+}: {
+  tone?: string;
+  title?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className={`docs-callout docs-callout--${tone}`}>
+      {title ? <div className="docs-callout-title">{title}</div> : null}
+      <div className="docs-callout-body">{children}</div>
+    </div>
+  );
+}
+
+// The MDX `<Checkpoint>` — a tutorial's "you should now see…" confirmation, with the
+// stripe-art placeholder standing in for a screenshot.
+
+import type { ReactNode } from 'react';
+
+export default function Checkpoint({ alt, children }: { alt?: string; children?: ReactNode }) {
+  return (
+    <div className="tut-check">
+      <div className="tut-check-head">
+        <span className="tut-check-tag">You should now see…</span>
+        <div className="tut-check-text">{children}</div>
+      </div>
+      <div className="tut-check-art" role="img" aria-label={alt}>
+        <span className="tut-check-cap">screenshot · {alt}</span>
+      </div>
+    </div>
+  );
+}
+
+// The MDX `<CodeBlock route="…">` wrapper. The code itself arrives as a fenced block in the
+// MDX body — so it stays readable, diffable and syntax-highlightable in the source file,
+// which a `code:` string field in a TypeScript record never was.
+
+import { useCallback, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+
+export default function CodeBlock({ route, children }: { route?: string; children?: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  const copy = useCallback(() => {
+    // Read the rendered text rather than threading the source through a prop: the fence is
+    // the source of truth, and anything else is a second copy that can drift from it.
+    const text = bodyRef.current?.innerText ?? '';
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1600);
+      },
+      () => undefined,
+    );
+  }, []);
+
+  return (
+    <div className="docs-codeblock">
+      <div className="docs-codebar">
+        <span className="docs-codebar-route">{route}</span>
+        <button type="button" className="docs-copy" aria-label="Copy code" onClick={copy}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <div ref={bodyRef}>{children}</div>
+    </div>
+  );
+}
+
+// The MDX `<DeepLink>` — a link that opens the live platform pre-loaded to the step's state,
+// plus the copy fallback for a blocked popup.
+
+import { useCallback, useState } from 'react';
+
+export default function DeepLink({ label, href }: { label?: string; href?: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(() => {
+    if (!href) return;
+    navigator.clipboard?.writeText(href).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1600);
+      },
+      () => undefined,
+    );
+  }, [href]);
+
+  return (
+    <div className="tut-deep">
+      <a className="tut-deep-pill" href={href} target="_blank" rel="noreferrer">
+        {label}
+      </a>
+      <button type="button" className="tut-deep-copy" onClick={copy}>
+        {copied ? 'Link copied' : 'Popup blocked? Copy the link'}
+      </button>
+    </div>
+  );
+}
+
+// The MDX `<Example>` — a named app with the platform's two standing CTAs.
+//
+// The two hrefs are PLATFORM paths authored in the corpus (`/present/github/…`, `/edit/github/…`),
+// so they render through `PlatformLink`, which resolves them against the host's origin and
+// escapes the frame: inside the sandboxed iframe a root-relative href resolves against
+// `sandbox.<host>`, which serves no such page.
+
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+
+export default function Example({
+  name,
+  desc,
+  presentHref,
+  editHref,
+}: {
+  name?: string;
+  desc?: string;
+  presentHref?: string;
+  editHref?: string;
+}) {
+  return (
+    <div className="docs-example">
+      <div className="docs-example-meta">
+        <div className="docs-example-name">{name}</div>
+        <div className="docs-example-desc">{desc}</div>
+      </div>
+      <div className="docs-example-actions">
+        {presentHref ? (
+          <PlatformLink className="docs-btn docs-btn--open" path={presentHref}>
+            Open
+          </PlatformLink>
+        ) : (
+          <a className="docs-btn docs-btn--open">Open</a>
+        )}
+        {editHref ? (
+          <PlatformLink className="docs-btn docs-btn--fork" path={editHref}>
+            Fork
+          </PlatformLink>
+        ) : (
+          <a className="docs-btn docs-btn--fork">Fork</a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The render target for the autolink anchor `remarkHeadingAnchors` prepends to every
+// heading. The plugin sets the heading's own `id` and emits `<HeadingAnchor id="…"/>` as its
+// first child, so this component must exist or MDX's missing-reference guard throws at
+// RENDER — which is how it was found, on a clean build.
+//
+// **This is a real permalink now.** It used to be scroll-only, because the site was
+// hash-routed: a URL has exactly one fragment and the router had taken it, so there was no
+// href a reader could copy. Retiring the hash router gave the fragment back, and this is
+// the first thing to spend it on — a heading a reader can link someone else to, which is
+// most of what a documentation URL is for.
+//
+// The two halves pull in opposite directions and both have to be right (the same reasoning
+// the SDK's own `HeadingAnchor` records):
+//
+//   • the HREF must be absolute in the HOST's space, so copy-link, middle-click and
+//     open-in-new-tab all produce a URL that resolves for someone else. Inside the sandbox
+//     a bare `#id` resolves against the SANDBOX's document URL, and "copy link address"
+//     then yields a sandbox-internal URL that means nothing to anyone;
+//   • the CLICK must not navigate to it — that is a full page load to the page you are
+//     already on. It scrolls, and the address bar the host owns is left alone.
+
+import { useCallback } from 'react';
+import type { MouseEvent } from 'react';
+import { useHostLocation } from '../hooks/useRoute';
+import { hrefFor } from '../lib/navigation';
+import { useRoute } from '../hooks/useRoute';
+import { routePath } from '../lib/routeSpace';
+
+export default function HeadingAnchor({ id }: { id?: string }) {
+  const loc = useHostLocation();
+  const route = useRoute();
+
+  const onClick = useCallback(
+    (e: MouseEvent<HTMLAnchorElement>) => {
+      // A modified click MEANS "open the permalink", and the href is exactly right for it.
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      if (id) document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+    [id],
+  );
+
+  // Defensive: the plugin always supplies an id. Render nothing rather than a dead `#`.
+  if (!id) return null;
+  const href = `${hrefFor(loc, routePath(route))}#${id}`;
+
+  return (
+    <a
+      className="docs-heading-anchor"
+      href={href}
+      onClick={onClick}
+      aria-label="Permalink to this heading"
+    >
+      <span aria-hidden="true">#</span>
+    </a>
+  );
+}
+
+// The component map an MDX corpus entry resolves its custom tags against.
+//
+// A data module (no component defined here), so the Fast Refresh rule is satisfied by
+// re-export. Passed to each compiled entry as `components={CORPUS_COMPONENTS}` — the MDX
+// runtime's own mechanism, no provider needed.
+//
+// This is the whole "custom components" answer that made MDX viable for a content-heavy but
+// non-prose site: the structured parts (an API signature's params and rejections, an example
+// app's two CTAs) stay STRUCTURED as JSX expression props, and only the prose around them
+// becomes markdown. Flattening those into paragraphs would have been the same mistake as
+// keeping the prose in TypeScript, in the other direction.
+
+import ApiSignature from './ApiSignature';
+import Callout from './Callout';
+import Checkpoint from './Checkpoint';
+import CodeBlock from './CodeBlock';
+import DeepLink from './DeepLink';
+import Example from './Example';
+import HeadingAnchor from './HeadingAnchor';
+
+export const CORPUS_COMPONENTS = {
+  ApiSignature,
+  Callout,
+  Checkpoint,
+  CodeBlock,
+  DeepLink,
+  Example,
+  // Required, not optional: `remarkHeadingAnchors` emits <HeadingAnchor/> into every
+  // heading, and MDX throws at RENDER (not at build) when a referenced component is
+  // missing. Found exactly that way.
+  HeadingAnchor,
+};
+
+import { describe, expect, it } from 'vitest';
+import { APPS, appsByRepo, RUN_TILE_REPOS, TEASER_REPOS } from './apps';
+
+// The two curated lists on `/` are hand-typed repo keys. They used to be resolved
+// with `find(...).filter(Boolean)`, which turns a typo into three tiles where four
+// were meant — a silent failure the page cannot report. These cases run the REAL
+// lists through the resolver, so a mistyped key fails here.
+
+describe('appsByRepo', () => {
+  it('resolves the Run section\'s four tiles from the real list', () => {
+    const apps = appsByRepo(RUN_TILE_REPOS);
+    expect(apps).toHaveLength(RUN_TILE_REPOS.length);
+    expect(apps.map((a) => a.repo)).toEqual(RUN_TILE_REPOS);
+  });
+
+  it('resolves the directory teaser\'s four tiles from the real list', () => {
+    const apps = appsByRepo(TEASER_REPOS);
+    expect(apps).toHaveLength(TEASER_REPOS.length);
+    expect(apps.map((a) => a.repo)).toEqual(TEASER_REPOS);
+  });
+
+  it('keeps the two selections disjoint — `/` must not show the same app twice', () => {
+    expect(RUN_TILE_REPOS.filter((r) => TEASER_REPOS.includes(r))).toEqual([]);
+  });
+
+  it('THROWS on a repo no record carries, naming the key', () => {
+    expect(() => appsByRepo(['whiteboard', 'white-board'])).toThrowError(/white-board/);
+  });
+
+  it('preserves the order asked for, not the order of APPS', () => {
+    const [first, second] = [APPS[1].repo, APPS[0].repo];
+    expect(appsByRepo([first, second]).map((a) => a.repo)).toEqual([first, second]);
+  });
+
+  it('returns an empty list for an empty request', () => {
+    expect(appsByRepo([])).toEqual([]);
+  });
+});
+
+// The single canonical app dataset. One typed record per app feeds the showcase
+// teaser, the full showcase grid, the app directory, and search — adding an app
+// is adding an entry, no component changes. Pure data (no React) so component
+// files stay HMR-friendly.
+//
+// Every app is a public repo under the immediately-run org; Open/Fork routes are
+// built from `repo` (see ../lib/routes). Star counts are intentionally omitted —
+// we print only verified numbers, and these aren't verified yet.
+
+// Provenance is a trust signal, not decoration:
+//   'official'            → first-party, immediately-run org
+//   { github: 'owner' }   → community app from a verified GitHub identity
+export type Provenance = 'official' | { github: string };
+
+export interface AppRecord {
+  /** Display name. */
+  name: string;
+  /** Repo name under the immediately-run org; also the Open/Fork route key. */
+  repo: string;
+  /** One line, sentence case, concrete — no hype. */
+  blurb: string;
+  /** Category slug used by chip/facet filters. */
+  category: string;
+  /** Human label shown on the tile corner. */
+  categoryLabel: string;
+  provenance: Provenance;
+  /** Grid footprint in the showcase: `big` spans 4 columns, `sm` spans 2. */
+  span: 'big' | 'sm';
+  /** Saturated gradient treatment for the occasional featured tile. */
+  variant?: 'accent' | 'blue';
+  /** Adds a " · featured" suffix to the corner label. */
+  featured?: boolean;
+  /**
+   * Capabilities the app DECLARES in its manifest — the directory's "what it can
+   * touch" facet. Optional on purpose: several apps declare nothing and acquire
+   * access at runtime from a user-driven grant instead, and the honest rendering
+   * of "we have not checked this" is an absent facet, not an empty one and
+   * certainly not a guess. A guessed capability list is a false trust signal,
+   * which is worse than no signal. Absent => the app shows no capability chips
+   * and is excluded from capability filtering.
+   */
+  caps?: string[];
+  /** Entry file, if it isn't the conventional src/App.tsx. */
+  entry?: string;
+}
+
+// Curated taxonomy / chip-row order. `all` is prepended by the UI.
+export const CATEGORIES: { slug: string; label: string }[] = [
+  { slug: 'creative', label: 'Creative' },
+  { slug: 'writing', label: 'Writing' },
+  { slug: 'everyday', label: 'Everyday' },
+  { slug: 'games', label: 'Games' },
+  { slug: 'tools', label: 'Tools' },
+  { slug: 'components', label: 'Components' },
+  { slug: 'agents', label: 'Agents' },
+  { slug: 'meta', label: 'Meta' },
+];
+
+// Capability facet vocabulary (mono labels in the directory).
+export const CAPABILITIES: { slug: string; label: string }[] = [
+  { slug: 'files', label: 'files' },
+  { slug: 'network', label: 'network' },
+  { slug: 'secrets', label: 'secrets' },
+  { slug: 'spaces', label: 'spaces' },
+  { slug: 'agent', label: 'agent' },
+];
+
+export const APPS: AppRecord[] = [
+  {
+    name: 'Whiteboard',
+    repo: 'whiteboard',
+    blurb: 'An infinite canvas for notes and sketches. Open the source while it runs.',
+    category: 'creative',
+    categoryLabel: 'Creative',
+    provenance: 'official',
+    span: 'big',
+    variant: 'accent',
+    featured: true,
+    caps: ['files'],
+  },
+  {
+    name: 'Markdown Notebook',
+    repo: 'markdown-notebook',
+    blurb: 'Write on the left, see it rendered on the right. Nothing leaves your browser.',
+    category: 'writing',
+    categoryLabel: 'Writing',
+    provenance: 'official',
+    span: 'sm',
+    caps: ['files'],
+  },
+  {
+    name: 'File Commander',
+    repo: 'file-commander',
+    blurb: 'A dual-pane, keyboard-driven file manager over the folders you mount.',
+    category: 'tools',
+    categoryLabel: 'Tools',
+    provenance: 'official',
+    span: 'sm',
+    variant: 'blue',
+    caps: ['files'],
+  },
+  {
+    name: 'File Explorer',
+    repo: 'file-explorer',
+    blurb: 'Browse a mounted folder as a tree. Sees only what you grant.',
+    category: 'tools',
+    categoryLabel: 'Tools',
+    provenance: 'official',
+    span: 'sm',
+    caps: ['files'],
+  },
+  {
+    name: 'File Selector',
+    repo: 'file-selector',
+    blurb: 'A reusable picker for handing one file to another app.',
+    category: 'components',
+    categoryLabel: 'Components',
+    provenance: 'official',
+    span: 'sm',
+    caps: ['files'],
+  },
+  {
+    name: 'Edit File',
+    repo: 'edit-file',
+    blurb: 'The platform editor as a task — open exactly one file, read-write.',
+    category: 'tools',
+    categoryLabel: 'Tools',
+    provenance: 'official',
+    span: 'sm',
+    caps: ['files'],
+  },
+  {
+    name: 'Theme Toggle',
+    repo: 'theme-toggle',
+    blurb: 'The light/dark switch as a tiny standalone app you can drop in anywhere.',
+    category: 'components',
+    categoryLabel: 'Components',
+    provenance: 'official',
+    span: 'sm',
+    caps: [],
+  },
+  {
+    name: 'Agent Demo',
+    repo: 'agent-demo',
+    blurb: 'A coding agent editing a running app — the change-by-asking loop, live.',
+    category: 'agents',
+    categoryLabel: 'Agents',
+    provenance: 'official',
+    span: 'sm',
+    caps: ['agent', 'network'],
+  },
+  {
+    name: 'Landing page',
+    repo: 'landing-page',
+    blurb: 'The immediately.run homepage itself — yes, the front page is an app you can fork.',
+    category: 'meta',
+    categoryLabel: 'Meta',
+    provenance: 'official',
+    span: 'sm',
+    caps: [],
+  },
+  {
+    name: 'Todo',
+    repo: 'todo',
+    blurb: 'Tasks and lists that live in your own files. Keep them private, or share them with your household.',
+    category: 'everyday',
+    categoryLabel: 'Everyday',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Habit Tracker',
+    repo: 'habit-tracker',
+    blurb: 'Daily habits, streaks and a year heatmap, stored as files you own.',
+    category: 'everyday',
+    categoryLabel: 'Everyday',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Kanban Board',
+    repo: 'kanban-board',
+    blurb: 'A board where every card is a file. Share the space and you share the board.',
+    category: 'everyday',
+    categoryLabel: 'Everyday',
+    provenance: 'official',
+    span: 'big',
+  },
+  {
+    name: 'Shared Calendar',
+    repo: 'shared-calendar',
+    blurb: 'A calendar for a family or a team. Events are files, and a day can hold photos and documents.',
+    category: 'everyday',
+    categoryLabel: 'Everyday',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Chore Rota',
+    repo: 'chore-rota',
+    blurb: 'Who takes out the trash, who brings the cookies. Rotations and sign-up sheets for a shared space.',
+    category: 'everyday',
+    categoryLabel: 'Everyday',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Flashcards',
+    repo: 'flashcards',
+    blurb: 'Spaced-repetition flashcards. A deck is a folder of cards you can hand to a class.',
+    category: 'everyday',
+    categoryLabel: 'Everyday',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Expense Tracker',
+    repo: 'expense-tracker',
+    blurb: 'A household budget where every expense is a file. Split bills with the people you share the space with.',
+    category: 'everyday',
+    categoryLabel: 'Everyday',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Photo Album',
+    repo: 'photo-album',
+    blurb: 'Albums that are just folders of pictures. Keep them private, or share a space with family.',
+    category: 'everyday',
+    categoryLabel: 'Everyday',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Unit Converter',
+    repo: 'unit-converter',
+    blurb: 'Units, time zones and a world clock. Instant, offline, no account.',
+    category: 'tools',
+    categoryLabel: 'Tools',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Dev Toolbox',
+    repo: 'dev-toolbox',
+    blurb: 'JSON, regex, encoders, hashes, diffs and UUIDs in one place. Nothing leaves your tab.',
+    category: 'tools',
+    categoryLabel: 'Tools',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'SQLite Studio',
+    repo: 'sqlite-studio',
+    blurb: 'Open a SQLite file, explore it, chart it, and ask questions in plain English with your own key.',
+    category: 'tools',
+    categoryLabel: 'Tools',
+    provenance: 'official',
+    span: 'big',
+  },
+  {
+    name: 'Chess',
+    repo: 'chess',
+    blurb: 'Correspondence chess with no server: every move is a file in a shared space. Play a friend, or the engine.',
+    category: 'games',
+    categoryLabel: 'Games',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Hex Conquest',
+    repo: 'hex-conquest',
+    blurb: 'A turn-based strategy game on a hex map. Play the computer, or take turns through a shared space.',
+    category: 'games',
+    categoryLabel: 'Games',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Arcade Classics',
+    repo: 'arcade-classics',
+    blurb: 'Snake, Tetris, Breakout and 2048 in one cabinet, with high scores in your own files.',
+    category: 'games',
+    categoryLabel: 'Games',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Puzzle Classics',
+    repo: 'puzzle-classics',
+    blurb: 'Minesweeper, Sudoku and a daily word game, with streaks in your files and a board for your group.',
+    category: 'games',
+    categoryLabel: 'Games',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Grove',
+    repo: 'grove',
+    blurb: 'A wiki engine that renders a repository of MDX as a browsable, themeable site.',
+    category: 'writing',
+    categoryLabel: 'Writing',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Reckoner',
+    repo: 'reckoner',
+    blurb: 'A spreadsheet-shaped workbook for models and what-if analysis.',
+    category: 'tools',
+    categoryLabel: 'Tools',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Space Manager',
+    repo: 'space-manager',
+    blurb: 'Create spaces, invite people, and manage roles and grants.',
+    category: 'components',
+    categoryLabel: 'Components',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Editor',
+    repo: 'editor',
+    blurb: 'The platform code editor, as an ordinary app you can fork and replace.',
+    category: 'components',
+    categoryLabel: 'Components',
+    provenance: 'official',
+    span: 'sm',
+  },
+  {
+    name: 'Devtools',
+    repo: 'devtools',
+    blurb: 'The problems list and tool runner behind the workbench Tools activity.',
+    category: 'components',
+    categoryLabel: 'Components',
+    provenance: 'official',
+    span: 'sm',
+  },
+];
+
+/**
+ * Resolve a hand-typed list of repo keys against APPS, in the order given.
+ *
+ * THROWS on a key that resolves to nothing. The curated lists below are typed by
+ * hand and a mistyped one used to be dropped by `.filter(Boolean)`, so the page
+ * rendered three tiles where four were intended and nothing anywhere said so. A
+ * module-level call therefore fails the build's first render loudly, and the
+ * accompanying test fails in CI before that.
+ */
+export function appsByRepo(repos: string[]): AppRecord[] {
+  return repos.map((repo) => {
+    const app = APPS.find((a) => a.repo === repo);
+    if (!app) {
+      throw new Error(`appsByRepo: no app in APPS has repo '${repo}' — fix the key or add the record.`);
+    }
+    return app;
+  });
+}
+
+// The two curated selections on `/`, kept beside the dataset they index into so a
+// test can resolve them against the real records. They are deliberately DISJOINT:
+// the Run section proves the sandbox with four Open buttons, and the directory
+// teaser is the shop window for four different apps.
+export const RUN_TILE_REPOS = ['whiteboard', 'kanban-board', 'sqlite-studio', 'chess'];
+export const TEASER_REPOS = ['markdown-notebook', 'todo', 'photo-album', 'grove'];
+
+// GENERATED by scripts/check-corpora.mjs — do not edit.
+//
+// The frontmatter of every entry in every declared corpus, validated against the schema its
+// corpus marker declares, plus the compiled MDX component for each. One authored source (the
+// MDX file), one generated artifact, and the generator IS the validator — so the index can
+// never describe an entry the checker did not pass.
+
+import type { ComponentType } from 'react';
+import Entry0 from '../../docs/capabilities--identity.mdx';
+import Entry1 from '../../docs/capabilities--model.mdx';
+import Entry2 from '../../docs/sdk--entry.mdx';
+import Entry3 from '../../docs/start--overview.mdx';
+import Entry4 from '../../tutorials/bind-a-space.mdx';
+import Entry5 from '../../tutorials/local-claude-code.mdx';
+import Entry6 from '../../tutorials/your-first-app.mdx';
+
+export interface CorpusHeading {
+  /** 2 or 3 — the markdown level. */
+  depth: number;
+  text: string;
+  /** The id remarkHeadingAnchors renders, computed by the SAME headingId(). */
+  id: string;
+}
+
+export interface CorpusEntry {
+  /** Repo-relative path of the entry. */
+  path: string;
+  /** Filename without the extension — the URL segment. */
+  slug: string;
+  frontmatter: Record<string, string | number | boolean | string[]>;
+  /** The entry's headings, for a table of contents and step navigation. */
+  headings: CorpusHeading[];
+}
+
+export const CORPUS_INDEX: CorpusEntry[] = [
+  {
+    "path": "docs/capabilities--identity.mdx",
+    "slug": "capabilities--identity",
+    "frontmatter": {
+      "title": "Identity and sign-in.",
+      "lead": "Identity is a capability like any other. You get a stable, opaque handle for the signed-in user — never a token, never an email, never a secret.",
+      "group": "capabilities",
+      "groupLabel": "Capabilities",
+      "order": 40
+    },
+    "headings": [
+      {
+        "depth": 2,
+        "text": "Reacting to session changes.",
+        "id": "reacting-to-session-changes"
+      }
+    ]
+  },
+  {
+    "path": "docs/capabilities--model.mdx",
+    "slug": "capabilities--model",
+    "frontmatter": {
+      "title": "The consent model.",
+      "lead": "Access to data is asked for, not taken. The filesystem you see is the filesystem you got. Every privileged call replies with a typed result, and forbidden means policy — not a bug to retry around.",
+      "group": "capabilities",
+      "groupLabel": "Capabilities",
+      "order": 30
+    },
+    "headings": [
+      {
+        "depth": 2,
+        "text": "Requesting more access.",
+        "id": "requesting-more-access"
+      },
+      {
+        "depth": 2,
+        "text": "Typed errors everywhere.",
+        "id": "typed-errors-everywhere"
+      }
+    ]
+  },
+  {
+    "path": "docs/sdk--entry.mdx",
+    "slug": "sdk--entry",
+    "frontmatter": {
+      "title": "The SDK entry point.",
+      "lead": "All platform interaction goes through @immediately-run/sdk — the only channel between your sandboxed app and the host. Pin it, import it, and call protocol methods reactively.",
+      "group": "sdk",
+      "groupLabel": "SDK",
+      "order": 20
+    },
+    "headings": [
+      {
+        "depth": 2,
+        "text": "Install and import.",
+        "id": "install-and-import"
+      },
+      {
+        "depth": 2,
+        "text": "Protocol and versioning.",
+        "id": "protocol-and-versioning"
+      }
+    ]
+  },
+  {
+    "path": "docs/start--overview.mdx",
+    "slug": "start--overview",
+    "frontmatter": {
+      "title": "Run any app from its source.",
+      "lead": "immediately.run loads a React + TypeScript app straight from a GitHub repo and transpiles it in the browser — no server, no deploy step. Open it, use it, then pop the hood.",
+      "group": "start",
+      "groupLabel": "Getting started",
+      "order": 10
+    },
+    "headings": [
+      {
+        "depth": 2,
+        "text": "The run, edit, contribute loop.",
+        "id": "the-run-edit-contribute-loop"
+      },
+      {
+        "depth": 2,
+        "text": "Where to go next.",
+        "id": "where-to-go-next"
+      }
+    ]
+  },
+  {
+    "path": "tutorials/bind-a-space.mdx",
+    "slug": "bind-a-space",
+    "frontmatter": {
+      "title": "Give a fork a folder to work in.",
+      "num": "03",
+      "pillar": "SPACES",
+      "outcome": "A forked app bound to a folder it can read and write, by your consent.",
+      "prereqs": "A fork of an app and a space or folder to bind it to.",
+      "time": "10 min",
+      "difficulty": "Intermediate",
+      "tags": [
+        "spaces",
+        "capabilities",
+        "consent"
+      ],
+      "order": 30,
+      "nextSlug": "your-first-app",
+      "nextLabel": "Publish an app by pushing a repo."
+    },
+    "headings": [
+      {
+        "depth": 3,
+        "text": "Fork the app.",
+        "id": "fork-the-app"
+      },
+      {
+        "depth": 3,
+        "text": "Request a folder.",
+        "id": "request-a-folder"
+      },
+      {
+        "depth": 3,
+        "text": "Grant access in the host prompt.",
+        "id": "grant-access-in-the-host-prompt"
+      },
+      {
+        "depth": 3,
+        "text": "Read and write through the mount.",
+        "id": "read-and-write-through-the-mount"
+      }
+    ]
+  },
+  {
+    "path": "tutorials/local-claude-code.mdx",
+    "slug": "local-claude-code",
+    "frontmatter": {
+      "title": "Change an app by asking a coding agent.",
+      "num": "02",
+      "pillar": "AGENTS",
+      "outcome": "An app feature written by a local coding agent, then run from source.",
+      "prereqs": "An app repo cloned locally and a coding agent installed.",
+      "time": "12 min",
+      "difficulty": "Intermediate",
+      "tags": [
+        "agents",
+        "local-dev",
+        "forking"
+      ],
+      "order": 20,
+      "nextSlug": "bind-a-space",
+      "nextLabel": "Give a fork a folder to work in."
+    },
+    "headings": [
+      {
+        "depth": 3,
+        "text": "Clone an app you want to change.",
+        "id": "clone-an-app-you-want-to-change"
+      },
+      {
+        "depth": 3,
+        "text": "Ask the agent for the change.",
+        "id": "ask-the-agent-for-the-change"
+      },
+      {
+        "depth": 3,
+        "text": "Run it against your working tree.",
+        "id": "run-it-against-your-working-tree"
+      },
+      {
+        "depth": 3,
+        "text": "Push the agent’s work.",
+        "id": "push-the-agents-work"
+      }
+    ]
+  },
+  {
+    "path": "tutorials/your-first-app.mdx",
+    "slug": "your-first-app",
+    "frontmatter": {
+      "title": "Publish an app by pushing a repo.",
+      "num": "01",
+      "pillar": "PUBLISHING",
+      "outcome": "A live app, running from your GitHub repo. No deploy step.",
+      "prereqs": "A GitHub account and a repo you can push to.",
+      "time": "8 min",
+      "difficulty": "Beginner",
+      "tags": [
+        "publishing",
+        "github",
+        "no-deploy"
+      ],
+      "order": 10,
+      "nextSlug": "local-claude-code",
+      "nextLabel": "Change an app by asking a coding agent."
+    },
+    "headings": [
+      {
+        "depth": 3,
+        "text": "Start from the template.",
+        "id": "start-from-the-template"
+      },
+      {
+        "depth": 3,
+        "text": "Make it yours in App.tsx.",
+        "id": "make-it-yours-in-apptsx"
+      },
+      {
+        "depth": 3,
+        "text": "Push to GitHub.",
+        "id": "push-to-github"
+      },
+      {
+        "depth": 3,
+        "text": "Run it live.",
+        "id": "run-it-live"
+      }
+    ]
+  }
+];
+
+/** Path → the compiled MDX component. Rendered inside an <MDXProvider>-style component map
+ *  so the corpus's custom components (<Callout/>, <ApiSignature/>, …) resolve. */
+export const CORPUS_ENTRIES: Record<string, ComponentType<Record<string, unknown>>> = {
+  "docs/capabilities--identity.mdx": Entry0,
+  "docs/capabilities--model.mdx": Entry1,
+  "docs/sdk--entry.mdx": Entry2,
+  "docs/start--overview.mdx": Entry3,
+  "tutorials/bind-a-space.mdx": Entry4,
+  "tutorials/local-claude-code.mdx": Entry5,
+  "tutorials/your-first-app.mdx": Entry6,
+};
+
+/** The entries of one corpus, in declared `order`. */
+export function corpusEntries(dir: string): CorpusEntry[] {
+  return CORPUS_INDEX.filter((e) => e.path.startsWith(`${dir}/`)).sort(
+    (a, b) => Number(a.frontmatter.order ?? 0) - Number(b.frontmatter.order ?? 0),
+  );
+}
+
+/** The machine surface, byte-identical to `public/llms.txt`. Exported so the page's
+ *  Copy button hands over exactly what the file contains. */
+export const LLMS_TXT = "# immediately.run\n> Apps you can take apart. Run any React/TS app from its source, in the browser. Fork and contribute back from the page itself.\n\n## Routes\n/ (front door) · /apps (the app directory) · /new (make an app) · /docs · /docs/<group>/<slug> · /tutorials · /tutorials/<slug> · /changelog. /showcase redirects to /apps.\n\n## Running a repo without loading the page\nThe omnibox grammar is `provider:namespace/repository@ref` (`github` is the default provider; a bare `owner/repo`, a GitHub repo URL and a /tree/ URL all work too — a /blob/ URL on a ref containing '/' is misread and is not supported). The resulting URL on the host is `/present/<provider>/<namespace>/<repository>[/<ref>]` — a ref is percent-encoded once, and the app's entry resolves from its package.json (no /files/ suffix needed).\n\n## This file\nThere is no host-served /llms.txt. Fetch this file from https://raw.githubusercontent.com/immediately-run/landing-page/main/public/llms.txt ; the in-site page that links it is https://immediately.run/s/docs/agents/llms .\n\n## Getting started\n- [Run any app from its source](https://immediately.run/s/docs/start/overview): immediately.run loads a React + TypeScript app straight from a GitHub repo and transpiles it in the browser — no server, no deploy step. Open it, use it, then pop the hood. (source: docs/start--overview.mdx)\n\n## SDK\n- [The SDK entry point](https://immediately.run/s/docs/sdk/entry): All platform interaction goes through @immediately-run/sdk — the only channel between your sandboxed app and the host. Pin it, import it, and call protocol methods reactively. (source: docs/sdk--entry.mdx)\n\n## Capabilities\n- [The consent model](https://immediately.run/s/docs/capabilities/model): Access to data is asked for, not taken. The filesystem you see is the filesystem you got. Every privileged call replies with a typed result, and forbidden means policy — not a bug to retry around. (source: docs/capabilities--model.mdx)\n- [Identity and sign-in](https://immediately.run/s/docs/capabilities/identity): Identity is a capability like any other. You get a stable, opaque handle for the signed-in user — never a token, never an email, never a secret. (source: docs/capabilities--identity.mdx)\n";
+
+// The application-template records (R3-515; FRONT_DOOR_IA §7.2).
+//
+// The records themselves live in `templates.json`, not in this file: the
+// `verify` step has to read them from outside the bundler, and a script that
+// greps a `.ts` file for `slug:` is a parser that fails silently the day the
+// formatting changes. JSON is data both a module and a script can read.
+//
+// This module is the TYPE and the typed view of that data. The array is asserted
+// rather than validated at load; the shape is CHECKED at the JSON boundary by
+// `validateRecords` in scripts/check-templates.mjs, which `npm run verify` runs
+// over this same file, so a malformed record fails the gate rather than `/new`.
+//
+// NO `fork` kind: forking the template is rejected (APP_ONBOARDING §3.1) and an
+// explicit fork exists only for Remix, which is 1.0 (release plan D2).
+//
+// `grove` is deliberately `unavailable`: it is not flagged is_template on GitHub
+// (verified 2026-09-02), so a `generate` record for it would ship a button that
+// 404s — which is what scripts/check-templates.mjs exists to catch.
+
+import records from "./templates.json";
+
+export interface TemplateRecord {
+  slug: string; // 'blank' | 'grove-wiki' | …
+  kind: "blank" | "app"; // the blank template vs an application template
+  name: string; // 'Blank app', 'Wiki, on Grove'
+  pitch: string; // one line, sentence case
+  gives: string[]; // what you get, 2–4 bullets
+  repo: string; // 'immediately-run/new-project-template'
+  example?: string; // repo whose present route is "Try it live"
+  start:
+    | { kind: "generate" } // GitHub /generate — the repo MUST be flagged as a template
+    | { kind: "run"; route: string } // opens an app that itself does the onboarding
+    | { kind: "unavailable"; reason: string }; // record exists; the card has no start button
+}
+
+export const TEMPLATES = records as TemplateRecord[];
+
+// Land a deep link on its heading.
+//
+// A permalink is only half a feature if it copies but does not arrive. The browser scrolls
+// to a fragment when the document loads, which for a client-rendered app is BEFORE the
+// heading exists — so pasting `/docs/start/overview#the-run-edit-contribute-loop` put the
+// reader at the top of the page, silently. (Measured: `scrollY` 0 with the heading 385px
+// down.) Nothing errors; the link just quietly does not work, which is the worst shape for
+// a bug in a documentation site.
+//
+// So the app scrolls itself, once the target exists. The retry window matters: the element
+// appears on the first paint after the route resolves, but an image or a late layout can
+// shift it, so this re-checks over a few frames and stops as soon as it lands — bounded, so
+// a fragment naming nothing gives up quietly instead of spinning.
+
+import { useEffect } from 'react';
+
+/** How long to keep looking for the target, in ms. Long enough for MDX + CSS to settle,
+ *  short enough that a bad fragment is not a busy loop. */
+const DEADLINE_MS = 1200;
+
+export function useFragmentScroll(fragment: string | undefined, routeKey: string): void {
+  useEffect(() => {
+    const id = (fragment ?? '').replace(/^#/, '');
+    if (!id) return;
+    let done = false;
+    const started = Date.now();
+    const tick = () => {
+      if (done) return;
+      const el = document.getElementById(id);
+      if (el) {
+        // `auto`, not `smooth`: this is arrival, not navigation. A smooth scroll from the
+        // top of a long page is a second of the reader watching content fly past.
+        el.scrollIntoView({ behavior: 'auto', block: 'start' });
+        done = true;
+        return;
+      }
+      if (Date.now() - started > DEADLINE_MS) return;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    return () => {
+      done = true;
+    };
+    // `routeKey` re-arms this on navigation: the same fragment on a different page is a
+    // different target.
+  }, [fragment, routeKey]);
+}
+
+// The router: path-based, host-aware.
+//
+// Two sources of truth, one per environment, and the hook's whole job is to pick the right
+// one and subscribe to it:
+//
+//   • on immediately.run, `navigationState.sandboxPath` — the host pushes it on every
+//     navigation, so React re-renders through the context and there is nothing to listen to;
+//   • in `vite dev`, `window.location.pathname` plus a `popstate` subscription, which
+//     `navigateTo` also dispatches so a click and a back button take the same path.
+//
+// It replaces a `hashchange` listener. The premise for that hash — "immediately.run serves a
+// single entry with no server to resolve sub-paths" — was already false: the app owns
+// `sandboxPath` and the host mirrors the location into the sandbox. The cost of keeping it
+// was that a URL has one fragment and the router had taken it, so heading permalinks had
+// nowhere to point.
+
+import { use, useEffect, useRef, useSyncExternalStore } from 'react';
+import { TinkerableContext } from '@immediately-run/sdk/TinkerableContext';
+import { appPathFromSandboxPath, legacyHashPath, parseRoute, redirectForPath } from '../lib/routeSpace';
+import type { Route } from '../lib/routeSpace';
+// Re-exported so the many components that only need the section type keep one import site.
+export type { Route, Section } from '../lib/routeSpace';
+import { hasHost, redirectTo } from '../lib/navigation';
+import type { HostLocation } from '../lib/navigation';
+
+const subscribeToHistory = (onChange: () => void): (() => void) => {
+  window.addEventListener('popstate', onChange);
+  return () => window.removeEventListener('popstate', onChange);
+};
+
+const currentLocalPath = (): string => window.location.pathname;
+// `useSyncExternalStore` needs a stable server snapshot; the site is client-rendered, so the
+// root is the only sensible one.
+const serverPath = (): string => '/';
+const currentLocalHash = (): string => window.location.hash;
+
+/** The host context, narrowed to what navigation needs. Empty in `vite dev`. */
+export function useHostLocation(): HostLocation {
+  const ctx = use(TinkerableContext);
+  return { outerHref: ctx?.outerHref, navigationState: ctx?.navigationState };
+}
+
+/** The fragment of the current URL (`#the-loop` → `the-loop`), from the host's navigation
+ *  state on the platform and from `location` locally. Empty for a legacy `#/route` hash,
+ *  which is a route rather than a fragment and is redirected away by `useRoute`. */
+export function useFragment(): string {
+  const loc = useHostLocation();
+  const localHash = useSyncExternalStore(subscribeToHistory, currentLocalHash, () => '');
+  const raw = hasHost(loc) ? (loc.navigationState.hash ?? '') : localHash;
+  return legacyHashPath(raw) === null ? raw.replace(/^#/, '') : '';
+}
+
+export function useRoute(): Route {
+  const loc = useHostLocation();
+  const localPath = useSyncExternalStore(subscribeToHistory, currentLocalPath, serverPath);
+  const appPath = hasHost(loc)
+    ? appPathFromSandboxPath(loc.navigationState.sandboxPath)
+    : localPath;
+
+  // Legacy `#/docs/…` links — every URL this site published before path routing — redirect
+  // once to the new spelling. Runs after paint rather than during render because it is a
+  // side effect on the URL; a bare `#fragment` is untouched, which is the point of freeing
+  // the fragment in the first place.
+  const hash = typeof window === 'undefined' ? '' : window.location.hash;
+  useEffect(() => {
+    const legacy = legacyHashPath(hash);
+    if (legacy === null) return;
+    redirectTo(loc, legacy);
+    // Clear the hash locally so the effect cannot re-fire on the redirected URL. On the
+    // platform the host owns the address bar and the push already dropped it.
+    if (!hasHost(loc)) {
+      window.history.replaceState({}, '', legacy);
+    }
+  }, [hash, loc]);
+
+  // R3-513 — retired section routes (`/showcase` → `/apps`) redirect the same
+  // way the legacy hash spelling does: after paint, once, with `replace`.
+  const redirect = redirectForPath(appPath);
+  useEffect(() => {
+    if (redirect === null) return;
+    redirectTo(loc, redirect);
+  }, [redirect, loc]);
+
+  const route = parseRoute(redirect ?? appPath);
+
+  // Scrolling to the top belongs to a SECTION change, not to every route change: moving
+  // between two docs pages should land at the top, but re-rendering the same section (a
+  // fragment scroll, a redirect) must not yank the reader.
+  //
+  // A ref, not state: the previous section is bookkeeping the render does not read, and
+  // holding it in state would set state from an effect — a cascading render for a value
+  // nothing displays (`react-hooks/set-state-in-effect`, which caught exactly this).
+  const lastSection = useRef(route.section);
+  useEffect(() => {
+    if (route.section === lastSection.current) return;
+    lastSection.current = route.section;
+    window.scrollTo({ top: 0 });
+  }, [route.section]);
+
+  return route;
+}
+
+import { useCallback, useEffect, useState } from 'react';
+
+export type Theme = 'dark' | 'light';
+
+const STORAGE_KEY = 'immediately-run-theme';
+
+// Accessing window.localStorage throws a SecurityError inside a sandboxed
+// iframe without the `allow-same-origin` flag (e.g. when the site is rendered
+// by the /present Sandpack preview), so every touch must be guarded.
+function safeStorageGet(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeStorageSet(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Storage unavailable (sandboxed iframe / privacy mode) — theme just
+    // won't persist across reloads.
+  }
+}
+
+function readInitialTheme(): Theme {
+  return safeStorageGet(STORAGE_KEY) === 'light' ? 'light' : 'dark';
+}
+
+// Persists the colour theme to localStorage and reflects it on <html> as a
+// `data-theme` attribute, matching the CSS in index.css. `dark` is represented
+// by the absence of the attribute.
+export function useTheme() {
+  const [theme, setTheme] = useState<Theme>(readInitialTheme);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'light') root.setAttribute('data-theme', 'light');
+    else root.removeAttribute('data-theme');
+    safeStorageSet(STORAGE_KEY, theme);
+  }, [theme]);
+
+  const toggle = useCallback(() => {
+    setTheme((t) => (t === 'light' ? 'dark' : 'light'));
+  }, []);
+
+  return { theme, toggle };
+}
+
+import { describe, expect, it } from 'vitest';
+import { PROVIDERS, parseLaunch } from './launch';
+
+// One `it` per row of R3-511's parsing table (FRONT_DOOR_IA §5.2), plus the
+// ref-encoding case. The parser is pure — these are the whole contract.
+
+describe('parseLaunch', () => {
+  it('parses a GitHub URL (also with trailing /, .git, ?query) as a location with no ref', () => {
+    for (const input of [
+      'https://github.com/acme/todo',
+      'https://github.com/acme/todo/',
+      'https://github.com/acme/todo.git',
+      'https://github.com/acme/todo?query=1',
+    ]) {
+      expect(parseLaunch(input)).toMatchObject({
+        kind: 'location',
+        provider: 'github',
+        namespace: 'acme',
+        repository: 'todo',
+      });
+      expect((parseLaunch(input) as { ref?: string }).ref).toBeUndefined();
+    }
+  });
+
+  it('/tree/<rest>: the ref is the WHOLE remainder (a ref may contain /)', () => {
+    expect(parseLaunch('https://github.com/acme/todo/tree/feat/x')).toEqual({
+      kind: 'location',
+      provider: 'github',
+      namespace: 'acme',
+      repository: 'todo',
+      ref: 'feat/x',
+      display: 'github:acme/todo@feat/x',
+      presentPath: '/present/github/acme/todo/feat%2Fx',
+    });
+  });
+
+  it('/blob/<rest>: the ref is the FIRST segment; the file path is dropped (documented limitation)', () => {
+    expect(parseLaunch('https://github.com/acme/todo/blob/main/src/App.tsx')).toEqual({
+      kind: 'location',
+      provider: 'github',
+      namespace: 'acme',
+      repository: 'todo',
+      ref: 'main',
+      display: 'github:acme/todo@main',
+      presentPath: '/present/github/acme/todo/main',
+    });
+  });
+
+  it('bare tuples take the default provider; a ref if given', () => {
+    expect(parseLaunch('acme/todo')).toMatchObject({
+      kind: 'location',
+      provider: 'github',
+      namespace: 'acme',
+      repository: 'todo',
+    });
+    expect(parseLaunch('acme/todo@dev')).toMatchObject({
+      kind: 'location',
+      namespace: 'acme',
+      repository: 'todo',
+      ref: 'dev',
+    });
+    expect(parseLaunch('acme/todo@feat/x')).toMatchObject({
+      kind: 'location',
+      repository: 'todo',
+      ref: 'feat/x',
+    });
+  });
+
+  it('a provider prefix names the provider', () => {
+    expect(parseLaunch('github:acme/todo@dev')).toMatchObject({
+      kind: 'location',
+      provider: 'github',
+      ref: 'dev',
+    });
+  });
+
+  it('a platform URL on this host (or any *.immediately.run) passes through with search and hash', () => {
+    expect(parseLaunch('https://immediately.run/present/github/a/b/main/x?y=1#z')).toEqual({
+      kind: 'platform-url',
+      path: '/present/github/a/b/main/x?y=1#z',
+    });
+    expect(parseLaunch('https://local.immediately.run/edit/github/a/b/main')).toEqual({
+      kind: 'platform-url',
+      path: '/edit/github/a/b/main',
+    });
+  });
+
+  it('a known grammar on an unknown provider is a typed rejection', () => {
+    expect(parseLaunch('gitlab:acme/todo')).toEqual({ kind: 'unknown-provider', provider: 'gitlab' });
+    expect(parseLaunch('https://gitlab.com/acme/todo')).toEqual({
+      kind: 'unknown-provider',
+      provider: 'gitlab',
+    });
+  });
+
+  it.each(['acme', 'acme/', '//', 'kanban', ''])('%s is free text', (input) => {
+    expect(parseLaunch(input)).toEqual({ kind: 'text', query: input.trim() });
+  });
+
+  it('whitespace around any input is trimmed first', () => {
+    expect(parseLaunch('  acme/todo  ')).toMatchObject({ kind: 'location', namespace: 'acme' });
+    expect(parseLaunch('  ')).toEqual({ kind: 'text', query: '' });
+  });
+
+  it('encodes the ref in presentPath exactly once: feat%2Fx', () => {
+    const launch = parseLaunch('acme/todo@feat/x');
+    expect(launch.kind).toBe('location');
+    expect((launch as { presentPath: string }).presentPath).toBe('/present/github/acme/todo/feat%2Fx');
+    expect((launch as { presentPath: string }).presentPath).not.toContain('%25');
+  });
+
+  it('the present path never carries /files/ or a trailing slash', () => {
+    expect((parseLaunch('acme/todo') as { presentPath: string }).presentPath).toBe(
+      '/present/github/acme/todo',
+    );
+  });
+
+  it('the provider table has one row; a second provider is a data change', () => {
+    expect(Object.keys(PROVIDERS)).toEqual(['github']);
+    expect(PROVIDERS.github).toBe('github.com');
+  });
+});
+
+// The launch parser (R3-511; FRONT_DOOR_IA §5.2) — turns what a visitor types
+// into the omnibox into a present route, a typed rejection for an unknown
+// provider, or free text. Pure: no React, no SDK, no network. The site cannot
+// check that a repo EXISTS — existence is the host's job after navigation.
+//
+// Grammar, in the order the parser tries them:
+//   1. a platform URL (any *.immediately.run host with a /present/ or /edit/
+//      path) — passed through; the caller resolves it against the current host
+//      origin.
+//   2. a provider-prefixed tuple (`github:acme/todo@dev` — the corpus location
+//      grammar) or a bare tuple (`acme/todo@feat/x`) with the default provider.
+//   3. a provider URL (`https://github.com/acme/todo/tree/feat/x`).
+//   4. anything else is free text (search only).
+
+/** The known providers: the prefix/spelling a user may type, and the URL host
+ *  that names the same provider. A second provider is a row here (FRONT_DOOR_IA
+ *  §5.1 — the chip renders one static option per row). */
+export const PROVIDERS: Readonly<Record<string, string>> = {
+  github: 'github.com',
+};
+
+const DEFAULT_PROVIDER = 'github';
+
+export type Launch =
+  | {
+      kind: 'location';
+      provider: string;
+      namespace: string;
+      repository: string;
+      ref?: string;
+      /** What the results row shows, e.g. `github:acme/todo@feat/x`. */
+      display: string;
+      /** A root-relative platform path, e.g. `/present/github/acme/todo/feat%2Fx`. */
+      presentPath: string;
+    }
+  | { kind: 'platform-url'; path: string }
+  | { kind: 'unknown-provider'; provider: string }
+  | { kind: 'text'; query: string };
+
+/** The `/present/…` path for a location. The ref is encoded ONCE — matching the
+ *  host's `encodeRef` (site-main `src/editor/shared.ts`), so a ref containing
+ *  `/` stays one segment. `/files/{entry}` is deliberately never appended: the
+ *  host resolves the app's entry from `package.json`. */
+function presentPathOf(provider: string, namespace: string, repository: string, ref?: string): string {
+  const base = `/present/${provider}/${namespace}/${repository}`;
+  return ref ? `${base}/${encodeURIComponent(ref)}` : base;
+}
+
+function location(provider: string, namespace: string, repository: string, ref?: string): Launch {
+  const display = ref
+    ? `${provider}:${namespace}/${repository}@${ref}`
+    : `${provider}:${namespace}/${repository}`;
+  return { kind: 'location', provider, namespace, repository, ...(ref ? { ref } : {}), display, presentPath: presentPathOf(provider, namespace, repository, ref) };
+}
+
+/** `gitlab.com` → `gitlab`: the label we can honestly name for a repo-URL on a
+ *  host we do not support. Documented shorthand, not a claim about the host. */
+function providerLabel(hostname: string): string {
+  return hostname.replace(/^www\./, '').split('.')[0];
+}
+
+/** Parse a `<ns>/<repo>[@<ref>]` tuple. Returns null when the input is not one
+ *  (wrong shape, missing pieces). The REF may contain `/` (`@feat/x`), so the
+ *  tail after the namespace is parsed left-to-right, not split on `/`. */
+function parseTuple(rest: string, provider: string): Launch | null {
+  const slash = rest.indexOf('/');
+  if (slash <= 0) return null; // need `<ns>/<repo>`; `acme/` and `acme` are text.
+  const namespace = rest.slice(0, slash);
+  const tail = rest.slice(slash + 1);
+  if (!namespace || !tail) return null;
+  const at = tail.indexOf('@');
+  const repository = at === -1 ? tail : tail.slice(0, at);
+  const ref = at === -1 ? undefined : tail.slice(at + 1);
+  if (!repository || repository.includes('/')) return null; // only the ref may span segments
+  if (ref !== undefined && !ref) return null; // `ns/repo@` — dangling @.
+  return location(provider, namespace, repository, ref);
+}
+
+export function parseLaunch(input: string, defaultProvider: string = DEFAULT_PROVIDER): Launch {
+  const raw = input.trim();
+  if (!raw) return { kind: 'text', query: raw };
+
+  // 1. URLs.
+  if (/^https?:\/\//i.test(raw)) {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      return { kind: 'text', query: raw };
+    }
+    const host = url.hostname.toLowerCase();
+
+    // This platform: pass the path (with search/hash) through; the caller
+    // resolves it against the current host origin.
+    if (host === 'immediately.run' || host.endsWith('.immediately.run')) {
+      if (/^\/(present|edit)(\/|$)/.test(url.pathname)) {
+        return { kind: 'platform-url', path: url.pathname + url.search + url.hash };
+      }
+      return { kind: 'text', query: raw };
+    }
+
+    const providerEntry = Object.entries(PROVIDERS).find(([, urlHost]) => urlHost === host);
+    if (providerEntry) {
+      const [provider] = providerEntry;
+      const segs = url.pathname.split('/').filter(Boolean);
+      if (segs.length < 2) return { kind: 'text', query: raw };
+      const [namespace, repo0] = segs;
+      const repo = repo0!.endsWith('.git') ? repo0!.slice(0, -4) : repo0!;
+      if (!repo) return { kind: 'text', query: raw };
+      // `/tree/<rest>` → the ref is the WHOLE remainder (a ref may contain `/`);
+      // `/blob/<first>` → the ref is the FIRST segment; the file path is dropped.
+      // Documented limitation: a /blob/ URL on a ref containing `/` is misread —
+      // the interpreted location is shown in the results row so it can be
+      // corrected. Any other extra segment is not a repo root → free text.
+      if (segs.length > 2) {
+        const [marker, ...extra] = segs.slice(2);
+        if (marker === 'tree' && extra.length > 0) {
+          return location(provider, namespace, repo, extra.join('/'));
+        }
+        if (marker === 'blob' && extra.length > 0) {
+          return location(provider, namespace, repo, extra[0]);
+        }
+        return { kind: 'text', query: raw };
+      }
+      return location(provider, namespace, repo);
+    }
+
+    // A repo-shaped URL on a host we cannot reach: name what was understood.
+    const segs = url.pathname.split('/').filter(Boolean);
+    if (segs.length >= 2) return { kind: 'unknown-provider', provider: providerLabel(host) };
+    return { kind: 'text', query: raw };
+  }
+
+  // 2. Provider-prefixed tuple (`github:acme/todo@dev`).
+  const colon = raw.indexOf(':');
+  if (colon > 0 && !raw.slice(0, colon).includes('/')) {
+    const provider = raw.slice(0, colon).toLowerCase();
+    const rest = raw.slice(colon + 1);
+    if (provider in PROVIDERS) {
+      const parsed = parseTuple(rest, provider);
+      return parsed ?? { kind: 'text', query: raw };
+    }
+    return { kind: 'unknown-provider', provider };
+  }
+
+  // 3. Bare tuple with the default provider.
+  const tuple = parseTuple(raw, defaultProvider);
+  if (tuple) return tuple;
+
+  // 4. Free text — search only.
+  return { kind: 'text', query: raw };
+}
+
+// The one place that knows whether a host is present.
+//
+// The site runs in two environments and they disagree about who owns the URL:
+//
+//   • **On immediately.run** the app is in a sandboxed iframe whose document URL is the
+//     SANDBOX's, not the one the reader sees. The host owns the address bar. An app must
+//     not touch `history` (it would move an invisible URL) and must not postMessage its own
+//     channel — every platform interaction goes through the SDK. So a navigation is
+//     `navigate(<absolute outer URL>)`, and an href is built with `constructOuterUrl`.
+//   • **In local `vite dev`** there is no host and no transport at all: the SDK's
+//     `sendMessage` throws. The app owns its own URL, so `history.pushState` is right.
+//
+// Everything below is the adapter, and nothing above it branches on environment again.
+//
+// A note on `addFilesPrefix: false`. `constructOuterUrl` prefixes `files/` by default,
+// because the SDK's own default route table maps `/files/*` to a file viewer. The site's
+// routes are ROUTES, not files — there is no file at `docs/start/overview`; the entry is
+// `docs/start--overview.mdx` — and after the two-URL-spaces decision `files/…` means
+// filesystem-true. Opting out keeps the two spaces honest and gives a prettier URL. The
+// host passes an unrecognised suffix through to the app verbatim, which is exactly what we
+// want; `parseRoute` still accepts the `files/` spelling inbound so a link built the default
+// way is not a dead end.
+
+// Imported from the NARROW subpaths, never the package root. Importing
+// `@immediately-run/sdk` pulls in every channel module, several of which reach for the host
+// transport at module load — which throws outright in `vite dev`, where there is no host.
+// The failure is total (a blank page, one line in the console) and it looks nothing like
+// "you imported too much", so it is worth the two extra import lines to avoid.
+import { navigate as sdkNavigate } from '@immediately-run/sdk/routing';
+import { constructOuterUrl } from '@immediately-run/sdk/urlUtils';
+import type { NavigationState } from '@immediately-run/sdk/TinkerableContext';
+
+/** What the host told us about where we are. Absent (all fields undefined) in `vite dev`. */
+export interface HostLocation {
+  outerHref?: string;
+  navigationState?: NavigationState;
+}
+
+/** True when the app is running inside the host — i.e. the context carries a real outer URL.
+ *  Checked on the CONTEXT rather than by probing for a transport, because the context is
+ *  what the href builder needs and a transport without one would not help. */
+export function hasHost(loc: HostLocation): loc is Required<HostLocation> {
+  return Boolean(loc.outerHref && loc.navigationState);
+}
+
+/**
+ * The href to render for an app-space path. On the platform this is an absolute URL in the
+ * HOST's space — which is what makes copy-link, middle-click and open-in-new-tab produce
+ * something that resolves for another reader. Locally it is the path itself.
+ */
+export function hrefFor(loc: HostLocation, appPath: string): string {
+  if (!hasHost(loc)) return appPath;
+  return constructOuterUrl(loc.outerHref, appPath, loc.navigationState, false);
+}
+
+/**
+ * Navigate to an app-space path. On the platform this asks the HOST to change the URL; the
+ * host then pushes the new `sandboxPath` back down, which is what re-renders the app. There
+ * is deliberately no local state update on that path — the host's push is the single source
+ * of truth, and updating optimistically would let the two disagree.
+ *
+ * Locally it pushes real history and dispatches `popstate`, so the same subscriber that
+ * handles back/forward handles a click too — one code path, not two.
+ */
+export function navigateTo(loc: HostLocation, appPath: string): void {
+  if (hasHost(loc)) {
+    sdkNavigate(hrefFor(loc, appPath));
+    return;
+  }
+  if (window.location.pathname === appPath) return;
+  window.history.pushState({}, '', appPath);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+/**
+ * Replace the current URL, for the legacy-hash redirect. `replace`, not `push`, so the back
+ * button does not bounce between the old spelling and the new one.
+ *
+ * On the platform there is no replace primitive — `navigate` is a push — so the redirect is
+ * a push there. That is the honest trade: one extra history entry on a legacy link, versus
+ * an app reaching into a history stack it does not own.
+ */
+export function redirectTo(loc: HostLocation, appPath: string): void {
+  if (hasHost(loc)) {
+    sdkNavigate(hrefFor(loc, appPath));
+    return;
+  }
+  window.history.replaceState({}, '', appPath);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+import { describe, expect, it, vi } from 'vitest';
+import {
+  focusHeroOmnibox,
+  focusOmnibox,
+  registerOmniboxFocus,
+  revealHeroOmnibox,
+} from './omniboxFocus';
+
+// The registry is a module singleton that several components write to on mount.
+// The defect these tests exist for: the mobile sheet's omnibox and the /new
+// omnibox each mounted a SECOND registration, and their unmount cleanup cleared
+// the slot the persistent nav field still owned — so ⌘K stopped working after
+// closing the sheet. Every case below unregisters what it registers, so the
+// shared module state does not leak between them.
+
+const handle = () => {
+  const focus = vi.fn();
+  const reveal = vi.fn();
+  return { focus, reveal, handle: { focus, reveal } };
+};
+
+describe('registerOmniboxFocus', () => {
+  it('focuses the nav field when only the nav omnibox is mounted', () => {
+    const nav = handle();
+    const off = registerOmniboxFocus('nav', nav.handle);
+    focusOmnibox();
+    expect(nav.focus).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it('restores the first registration when a SECOND instance of the same variant unmounts', () => {
+    // The mobile sheet: the persistent nav field is already registered, the
+    // sheet mounts a second `nav` omnibox, then the sheet closes.
+    const persistent = handle();
+    const sheet = handle();
+    const offPersistent = registerOmniboxFocus('nav', persistent.handle);
+    const offSheet = registerOmniboxFocus('nav', sheet.handle);
+
+    focusOmnibox();
+    expect(sheet.focus).toHaveBeenCalledTimes(1);
+    expect(persistent.focus).not.toHaveBeenCalled();
+
+    offSheet();
+    focusOmnibox();
+    expect(persistent.focus).toHaveBeenCalledTimes(1);
+    expect(sheet.focus).toHaveBeenCalledTimes(1);
+
+    offPersistent();
+  });
+
+  it('leaves the nav field reachable after the /new omnibox unmounts', () => {
+    // `/new` mounts its own variant beside the nav field; navigating away
+    // unmounts it and must not take the nav registration with it.
+    const nav = handle();
+    const neu = handle();
+    const offNav = registerOmniboxFocus('nav', nav.handle);
+    const offNew = registerOmniboxFocus('new', neu.handle);
+
+    focusOmnibox();
+    expect(neu.focus).toHaveBeenCalledTimes(1);
+
+    offNew();
+    focusOmnibox();
+    expect(nav.focus).toHaveBeenCalledTimes(1);
+
+    offNav();
+  });
+
+  it('prefers the hero omnibox over the nav field, and `new` over both', () => {
+    const nav = handle();
+    const hero = handle();
+    const neu = handle();
+    const offNav = registerOmniboxFocus('nav', nav.handle);
+    const offHero = registerOmniboxFocus('hero', hero.handle);
+
+    focusOmnibox();
+    expect(hero.focus).toHaveBeenCalledTimes(1);
+    expect(nav.focus).not.toHaveBeenCalled();
+
+    const offNew = registerOmniboxFocus('new', neu.handle);
+    focusOmnibox();
+    expect(neu.focus).toHaveBeenCalledTimes(1);
+    expect(hero.focus).toHaveBeenCalledTimes(1);
+
+    offNew();
+    offHero();
+    focusOmnibox();
+    expect(nav.focus).toHaveBeenCalledTimes(1);
+    offNav();
+  });
+
+  it('unregisters by identity, so a stale cleanup cannot clear a live registration', () => {
+    const first = handle();
+    const second = handle();
+    const offFirst = registerOmniboxFocus('hero', first.handle);
+    offFirst();
+    const offSecond = registerOmniboxFocus('hero', second.handle);
+    offFirst(); // the unmounted instance's cleanup, run again
+    focusHeroOmnibox();
+    expect(second.focus).toHaveBeenCalledTimes(1);
+    offSecond();
+  });
+
+  it('does nothing when no omnibox is mounted', () => {
+    expect(() => focusOmnibox()).not.toThrow();
+    expect(() => focusHeroOmnibox()).not.toThrow();
+    expect(() => revealHeroOmnibox()).not.toThrow();
+  });
+});
+
+describe('revealHeroOmnibox', () => {
+  it('scrolls the hero field into view and then focuses it', () => {
+    const calls: string[] = [];
+    const off = registerOmniboxFocus('hero', {
+      focus: () => calls.push('focus'),
+      reveal: () => calls.push('reveal'),
+    });
+    revealHeroOmnibox();
+    expect(calls).toEqual(['reveal', 'focus']);
+    off();
+  });
+
+  it('reaches only the hero — the nav field is never scrolled to', () => {
+    const nav = handle();
+    const off = registerOmniboxFocus('nav', nav.handle);
+    revealHeroOmnibox();
+    expect(nav.reveal).not.toHaveBeenCalled();
+    expect(nav.focus).not.toHaveBeenCalled();
+    off();
+  });
+
+  it('still focuses a hero registered without a `reveal`', () => {
+    const focus = vi.fn();
+    const off = registerOmniboxFocus('hero', { focus });
+    revealHeroOmnibox();
+    expect(focus).toHaveBeenCalledTimes(1);
+    off();
+  });
+});
+
+// Cross-component focus plumbing for the omnibox. The nav field on `/` activates
+// the hero omnibox, ⌘K focuses whichever omnibox is mounted, and the two "paste a
+// repo" buttons further down `/` scroll the hero field into view and focus it.
+// The mounted instances publish their handles here on mount — a module registry,
+// not prop drilling through App. Framework-free by design (Fast refresh: no
+// components in this file).
+//
+// A STACK, not one slot per variant: more than one omnibox of the same variant can
+// be mounted at once (the persistent nav field and the mobile sheet's field are
+// both `nav`), and a single slot made the second instance's UNMOUNT clear the
+// registration the first one still needed — ⌘K then reached nothing. Each
+// registration is removed by identity, so the previous one is restored.
+
+export type OmniboxVariant = 'hero' | 'nav' | 'new';
+
+export interface OmniboxHandle {
+  /** Move keyboard focus into the field. */
+  focus: () => void;
+  /** Bring the field into view. Absent for fields that are always on screen. */
+  reveal?: () => void;
+}
+
+interface Registration {
+  variant: OmniboxVariant;
+  handle: OmniboxHandle;
+}
+
+const stack: Registration[] = [];
+
+/** The most recently mounted omnibox of this variant, if any is mounted. */
+function current(variant: OmniboxVariant): OmniboxHandle | undefined {
+  for (let i = stack.length - 1; i >= 0; i -= 1) {
+    if (stack[i].variant === variant) return stack[i].handle;
+  }
+  return undefined;
+}
+
+/** Focus the hero omnibox (no-op when no hero variant is mounted). */
+export function focusHeroOmnibox(): void {
+  current('hero')?.focus();
+}
+
+/** Scroll the hero omnibox into view and focus it — what a "paste a repo" CTA
+ *  further down the page does. No-op when no hero omnibox is mounted. */
+export function revealHeroOmnibox(): void {
+  const hero = current('hero');
+  if (!hero) return;
+  hero.reveal?.();
+  hero.focus();
+}
+
+/** Focus whichever omnibox is mounted — the page's own field first (`new`), then
+ *  the hero, then the nav field, which is on every route. */
+export function focusOmnibox(): void {
+  (current('new') ?? current('hero') ?? current('nav'))?.focus();
+}
+
+/** Publish a mounted omnibox; the returned function unregisters exactly this one. */
+export function registerOmniboxFocus(variant: OmniboxVariant, handle: OmniboxHandle): () => void {
+  const registration: Registration = { variant, handle };
+  stack.push(registration);
+  return () => {
+    const at = stack.indexOf(registration);
+    if (at !== -1) stack.splice(at, 1);
+  };
+}
+
+import { describe, expect, it } from 'vitest';
+import {
+  appPathFromSandboxPath,
+  redirectForPath,
+  legacyHashPath,
+  parseRoute,
+  routePath,
+} from './routeSpace';
+
+// The route space is the one part of retiring the hash router that is pure, and it is also
+// the part where a mistake is invisible: a wrong parse renders the homepage instead of an
+// error, so nothing looks broken — the reader just does not arrive.
+
+describe('redirectForPath (R3-513 — one directory)', () => {
+  it('redirects the retired showcase route to /apps', () => {
+    expect(redirectForPath('/showcase')).toBe('/apps');
+    expect(redirectForPath('/showcase/')).toBe('/apps');
+  });
+
+  it('leaves every live route alone', () => {
+    expect(redirectForPath('/apps')).toBeNull();
+    expect(redirectForPath('/docs/start/overview')).toBeNull();
+    expect(redirectForPath('/')).toBeNull();
+    expect(redirectForPath('/new')).toBeNull();
+  });
+});
+
+describe('parseRoute', () => {
+  it('reads the root as home', () => {
+    expect(parseRoute('/')).toEqual({ section: 'home', rest: [] });
+    expect(parseRoute('')).toEqual({ section: 'home', rest: [] });
+  });
+
+  it('reads a bare section', () => {
+    // R3-513: `showcase` left SECTIONS — /showcase is a redirect to /apps now,
+    // not a route (see redirectForPath).
+    expect(parseRoute('/changelog')).toEqual({ section: 'changelog', rest: [] });
+  });
+
+  it('reads /new as its own section, not as the home fallback', () => {
+    // `new` is in SECTIONS, so a mistyped route and a real one are told apart:
+    // an unknown first segment lands on home, and this must not.
+    expect(parseRoute('/new')).toEqual({ section: 'new', rest: [] });
+    expect(parseRoute('/new/')).toEqual({ section: 'new', rest: [] });
+  });
+
+  it('reads the segments after a section as `rest`', () => {
+    expect(parseRoute('/docs/start/overview')).toEqual({
+      section: 'docs',
+      rest: ['start', 'overview'],
+    });
+    expect(parseRoute('/tutorials/your-first-app')).toEqual({
+      section: 'tutorials',
+      rest: ['your-first-app'],
+    });
+  });
+
+  it('tolerates sloppy slashes', () => {
+    // Trailing slashes arrive from hand-typed URLs and from some link shorteners; doubled
+    // ones from naive string joins. None of them should change where the reader lands.
+    expect(parseRoute('/docs/start/overview/')).toEqual(parseRoute('/docs/start/overview'));
+    expect(parseRoute('//docs//start//overview')).toEqual(parseRoute('/docs/start/overview'));
+    expect(parseRoute('docs/start/overview')).toEqual(parseRoute('/docs/start/overview'));
+  });
+
+  it('falls back to home for an unknown section, with NO rest', () => {
+    // The fallback is deliberate (a mistyped URL landing on the homepage beats a dead end),
+    // but it must not carry the unknown path's segments through as if they were docs args.
+    expect(parseRoute('/nonsense/deep/path')).toEqual({ section: 'home', rest: [] });
+  });
+});
+
+describe('routePath', () => {
+  it('renders home as the ROOT, not /home', () => {
+    expect(routePath({ section: 'home', rest: [] })).toBe('/');
+  });
+
+  it('round-trips every section and sub-path', () => {
+    for (const path of [
+      '/',
+      '/apps',
+      '/new',
+      '/docs',
+      '/docs/start/overview',
+      '/tutorials/your-first-app',
+      '/changelog',
+    ]) {
+      expect(routePath(parseRoute(path))).toBe(path);
+    }
+  });
+});
+
+describe('legacyHashPath — every URL the site published before path routing', () => {
+  it('translates a legacy route hash', () => {
+    expect(legacyHashPath('#/docs/start/overview')).toBe('/docs/start/overview');
+    expect(legacyHashPath('#/showcase')).toBe('/showcase');
+    expect(legacyHashPath('#/')).toBe('/');
+  });
+
+  it('leaves a BARE fragment alone — that is what freeing the fragment was for', () => {
+    // A heading permalink is `#the-loop`. Reading it as a legacy route would redirect the
+    // reader to `/the-loop`, i.e. the homepage — turning the feature into a bug.
+    expect(legacyHashPath('#the-loop')).toBeNull();
+    expect(legacyHashPath('#sec-8-9')).toBeNull();
+    expect(legacyHashPath('')).toBeNull();
+    expect(legacyHashPath('#')).toBeNull();
+  });
+});
+
+describe('appPathFromSandboxPath', () => {
+  it('reads the host-pushed sub-path as an app path', () => {
+    expect(appPathFromSandboxPath('docs/start/overview')).toBe('/docs/start/overview');
+    expect(appPathFromSandboxPath('/docs/start/overview')).toBe('/docs/start/overview');
+  });
+
+  it('treats an absent or empty sub-path as the root', () => {
+    // A bare `/present/github/ns/repo/main` with no trailing sub-path is a real URL shape.
+    expect(appPathFromSandboxPath(undefined)).toBe('/');
+    expect(appPathFromSandboxPath(null)).toBe('/');
+    expect(appPathFromSandboxPath('')).toBe('/');
+    expect(appPathFromSandboxPath('/')).toBe('/');
+  });
+
+  it('accepts the `files/` and `corpus/` spellings of the same route', () => {
+    // The SDK's own link builder prefixes `files/` unless you opt out, and the host maps
+    // `corpus/…` onto the app's space for a repo with no marker. Both are spellings of this
+    // route, not a second space — 404ing on the difference would be a trap.
+    expect(appPathFromSandboxPath('files/docs/start/overview')).toBe('/docs/start/overview');
+    expect(appPathFromSandboxPath('corpus/docs/start/overview')).toBe('/docs/start/overview');
+  });
+
+  it('does not strip a section that merely STARTS with the prefix word', () => {
+    expect(appPathFromSandboxPath('filestore/x')).toBe('/filestore/x');
+  });
+});
+
+// The site's route space — pure, so the parsing and the platform-prefix arithmetic can be
+// tested without a browser or a host.
+//
+// **The platform owns the URL prefix; the app owns the suffix.** `SANDBOX_ROUTING_SPEC` is
+// explicit about that split: an outer URL is
+// `/{mode}/{provider}/{namespace}/{repository}/{ref}/{sandboxPath}`, and everything from
+// `sandboxPath` on is ours. So the site's routes are ordinary paths — `/docs/start/overview`
+// — that happen to be mounted under a prefix on immediately.run and at the origin root in
+// local `vite dev`. Nothing here needs to know which.
+//
+// This replaces a hash router whose stated justification ("no server to resolve sub-paths")
+// stopped being true: the host mirrors the browser location into the sandbox on every
+// navigation, which is the same machinery the `corpus/…` grammar rides on. The concrete cost
+// of the hash was that a URL has exactly one fragment and the router owned it, so a heading
+// permalink had nowhere to go.
+
+export type Section = 'home' | 'apps' | 'new' | 'docs' | 'tutorials' | 'changelog';
+
+export interface Route {
+  section: Section;
+  /** Path segments after the section: `/docs/agents/llms` → `['agents','llms']`. */
+  rest: string[];
+}
+
+export const SECTIONS: Section[] = ['home', 'apps', 'new', 'docs', 'tutorials', 'changelog'];
+
+/** Split a path into clean segments, tolerating leading/trailing/duplicate slashes. */
+const segmentsOf = (path: string): string[] => path.split('/').filter(Boolean);
+
+/**
+ * R3-513 — one directory: `/showcase` redirects to `/apps`, the way legacy hash
+ * routes redirect (once, with `replace` semantics). `showcase` is deliberately
+ * NOT in `SECTIONS` — it is not a route any more, only a redirect, so old links
+ * keep working while the nav and the site map carry exactly one directory.
+ * Returns null when the path needs no redirect.
+ */
+export function redirectForPath(appPath: string): string | null {
+  const first = segmentsOf(appPath)[0];
+  if (first === 'showcase') return '/apps';
+  return null;
+}
+
+/**
+ * Parse an app-space path into a route. Unknown first segments resolve to `home` rather
+ * than to a 404 section — the site has always behaved that way, and a mistyped URL landing
+ * on the homepage is friendlier than a dead end.
+ */
+export function parseRoute(appPath: string): Route {
+  const segs = segmentsOf(appPath);
+  const first = segs[0] ?? '';
+  if (first === '') return { section: 'home', rest: [] };
+  const section = (SECTIONS as string[]).includes(first) ? (first as Section) : 'home';
+  return { section, rest: section === 'home' && first !== 'home' ? [] : segs.slice(1) };
+}
+
+/** The app-space path for a route. `home` is the root, not `/home`. */
+export function routePath(route: Route): string {
+  if (route.section === 'home' && route.rest.length === 0) return '/';
+  return `/${[route.section, ...route.rest].join('/')}`;
+}
+
+/**
+ * Translate a legacy `#/…` hash URL into its app-space path, or null when the hash is not a
+ * legacy route.
+ *
+ * Every link the site published for its whole life so far was `#/docs/…`, and those live in
+ * other people's bookmarks, other people's posts, and the changelog's own `docHref` records.
+ * Dropping them would make retiring the hash a user-visible breakage rather than an
+ * internal change, so the boot path redirects instead — once, with `replace`, so the back
+ * button does not bounce between the two spellings.
+ *
+ * A BARE fragment (`#the-loop`, what a heading permalink now produces) is deliberately NOT a
+ * legacy route: it addresses a section of the current page, which is the whole point of
+ * freeing the fragment.
+ */
+export function legacyHashPath(hash: string): string | null {
+  if (!hash.startsWith('#/')) return null;
+  const segs = segmentsOf(hash.slice(2));
+  return segs.length === 0 ? '/' : `/${segs.join('/')}`;
+}
+
+/**
+ * Where the app's route space begins inside an outer URL.
+ *
+ * On immediately.run the outer pathname carries five platform segments before ours
+ * (`/present/github/ns/repo/main/…`), and the host may or may not have left a trailing
+ * slash. Locally there is no prefix at all. Rather than reimplement the platform's URL
+ * grammar — which has real subtleties (encoded refs, an absent sandboxPath) the SDK's
+ * `parsePath` already handles — the caller passes the sandboxPath the host gave it and this
+ * only normalises it.
+ *
+ * `files/…` is accepted and stripped: the SDK's own link builder prefixes it by default, so
+ * a link built without opting out arrives that way, and silently 404ing on the difference
+ * would be a trap. It is a filesystem-space spelling of the same route, not a second space.
+ */
+export function appPathFromSandboxPath(sandboxPath: string | undefined | null): string {
+  if (!sandboxPath) return '/';
+  const segs = segmentsOf(sandboxPath);
+  if (segs[0] === 'files' || segs[0] === 'corpus') segs.shift();
+  return segs.length === 0 ? '/' : `/${segs.join('/')}`;
+}
+
+// Same-origin platform routes. Every "Open" / "Fork" CTA on the site is a single
+// click into the runner/editor — no new tab, no context switch. These build the
+// canonical /present and /edit URLs from a repo under the immediately-run org.
+
+const OWNER = 'immediately-run';
+
+/** "Open / Run" — opens the app in the runner. */
+export function presentRoute(repo: string, entry = 'src/App.tsx', branch = 'main'): string {
+  return `/present/github/${OWNER}/${repo}/${branch}/files/${entry}`;
+}
+
+/** "Fork / Tinker" — opens the app in the editor (copy-on-write). */
+export function editRoute(repo: string, entry = 'src/App.tsx', branch = 'main'): string {
+  return `/edit/github/${OWNER}/${repo}/${branch}/files/${entry}`;
+}
+
+const REPO = 'landing-page';
+const BRANCH = 'main';
+
+/** A repo file on GitHub, for a human to read. */
+export function sourceUrl(repoPath: string): string {
+  return `https://github.com/${OWNER}/${REPO}/blob/${BRANCH}/${repoPath.replace(/^\/+/, '')}`;
+}
+
+/** A repo file as raw bytes — what an AGENT wants: fetchable, stable, no route space involved.
+ *
+ *  Deliberately NOT the platform's `files/` space. This app now owns its whole path space
+ *  (it boots with a catch-all so deep links work), which means `files/…` reaches the app's
+ *  router rather than the host's file view — so an in-platform files link renders nothing.
+ *  The bytes live in a public repo; GitHub already serves them, on and off the platform. */
+export function rawUrl(repoPath: string): string {
+  return `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${repoPath.replace(/^\/+/, '')}`;
+}
+
+import { describe, expect, it } from 'vitest';
+import { GITHUB_APP_INSTALL_URL, SDK_REFERENCE_URL, sdkReferenceUrl } from './urls';
+
+describe('external URLs', () => {
+  it('keeps the install flow on github.com/apps', () => {
+    expect(GITHUB_APP_INSTALL_URL).toBe(
+      'https://github.com/apps/immediately-run/installations/new',
+    );
+  });
+
+  it('keeps the reference base a site ROOT — sdkReferenceUrl joins onto its trailing slash', () => {
+    expect(SDK_REFERENCE_URL.endsWith('/')).toBe(true);
+    expect(sdkReferenceUrl('llms.txt')).toBe(
+      'https://immediately-run.github.io/immediately-run-sdk/llms.txt',
+    );
+    expect(sdkReferenceUrl('api.json')).toBe(
+      'https://immediately-run.github.io/immediately-run-sdk/api.json',
+    );
+  });
+
+  it('tolerates a leading slash on the file, rather than emitting a double slash', () => {
+    expect(sdkReferenceUrl('/llms.txt')).toBe(sdkReferenceUrl('llms.txt'));
+  });
+});
+
+// External URLs the site links to. Same rule as `routes.ts`, one origin further
+// out: a URL that appears twice lives here once and nowhere else, so a moved
+// install flow or a renamed reference site is one edit rather than a grep.
+
+/** GitHub's install flow for the immediately.run App — the one prerequisite the
+ *  platform cannot perform for a visitor (the footer, /new and the Publish
+ *  section all point at it). */
+export const GITHUB_APP_INSTALL_URL = 'https://github.com/apps/immediately-run/installations/new';
+
+/** The SDK's API reference: TypeDoc output published to the SDK repo's own Pages
+ *  origin on every release. Generated from the published package, so unlike this
+ *  site it cannot drift from the code — which is why the site links it instead of
+ *  restating signatures. Keeps its trailing slash: it is a site root. */
+export const SDK_REFERENCE_URL = 'https://immediately-run.github.io/immediately-run-sdk/';
+
+/** A generated artifact published beside the reference, e.g. `llms.txt`, `api.json`. */
+export function sdkReferenceUrl(file: string): string {
+  return `${SDK_REFERENCE_URL}${file.replace(/^\/+/, '')}`;
+}
+
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import App from './App.tsx'
+
+// Local-dev / production entry point. immediately.run does NOT use this file —
+// it renders the default export of src/App.tsx directly. Keep anything the
+// rendered app needs (global CSS imports, providers) inside App.tsx, not here.
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+// Lets TypeScript treat `import Article from './x.mdx'` as a React component.
+declare module '*.mdx' {
+  import type { ComponentType } from 'react';
+  const MDXComponent: ComponentType;
+  export default MDXComponent;
+}
+
+// The entry immediately.run runs (`package.json` → `main`). NOT the `vite dev`
+// entry — that is `src/main.tsx`, reached through `index.html`, and it must stay
+// SDK-free (see below).
+//
+// Why this file has to exist at all. The platform resolves an app's entry from
+// `package.json` (`main`/`source`/`module`, then the preset defaults). With none
+// of them present, this repo had no entry, so the host fell through to the SDK's
+// DEFAULT_ROUTING_SPEC — `/` → `MainContent`, `/files/*` → `FileRouter`, and
+// **everything else → ErrorNotFound**. `MainContent` then redirects `/` to
+// `/files/src/App.tsx`, so the site rendered as a FILE VIEW of its own root
+// component and never owned a path space at all. Every deep link 404'd
+// (`No route registered for path /docs/start/overview`), which made the whole
+// path-routing design inert in the one environment it was written for.
+//
+// `boot({ children })` is the fix, and deliberately not `boot({ routingSpec })`:
+// given children, the SDK installs CATCH_ALL_ROUTING_SPEC — any `sandboxPath`
+// matches — and renders them inside the navigation providers. Dispatch stays
+// where it already lives, in `useRoute`/`parseRoute`, rather than being split
+// across a host route table and the app's own router that would then have to
+// agree with each other.
+//
+// The `vite dev` split is the reason this is a separate file rather than a
+// branch inside `main.tsx`: importing the SDK's `boot` reaches for the host
+// transport at module load, which throws outright when there is no host. Keeping
+// the two entries apart means neither environment loads the other's imports.
+import { boot } from '@immediately-run/sdk/boot';
+import App from './App';
+
+boot({ children: <App /> });
+
+import './apps.css';
+import { useMemo, useState } from 'react';
+import { APPS, CATEGORIES, CAPABILITIES, type AppRecord } from '../../data/apps';
+import { presentRoute, editRoute } from '../../lib/routes';
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+import AppCard from '../../components/AppCard';
+
+type ProvKey = 'official' | 'community';
+type SortKey = 'featured' | 'name' | 'category';
+type View = 'rows' | 'grid';
+
+interface Filters {
+  cats: Set<string>;
+  provs: Set<ProvKey>;
+  caps: Set<string>;
+}
+
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: 'featured', label: 'Featured' },
+  { key: 'name', label: 'Name' },
+  { key: 'category', label: 'Category' },
+];
+
+const PROVENANCES: { key: ProvKey; label: string }[] = [
+  { key: 'official', label: 'Official' },
+  { key: 'community', label: 'Community' },
+];
+
+// Dot color per facet group — derived from brand tokens, not hard-coded hex.
+const CAT_DOT = 'var(--accent)';
+const PROV_DOT = 'var(--accent-2)';
+const CAP_DOT = 'var(--accent-3)';
+
+function provKey(app: AppRecord): ProvKey {
+  return app.provenance === 'official' ? 'official' : 'community';
+}
+
+function matches(app: AppRecord, f: Filters): boolean {
+  if (f.cats.size && !f.cats.has(app.category)) return false;
+  if (f.provs.size && !f.provs.has(provKey(app))) return false;
+  if (f.caps.size) {
+    for (const c of f.caps) if (!(app.caps ?? []).includes(c)) return false;
+  }
+  return true;
+}
+
+function toggle<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
+function sortApps(apps: AppRecord[], sort: SortKey): AppRecord[] {
+  const out = [...apps];
+  if (sort === 'name') out.sort((a, b) => a.name.localeCompare(b.name));
+  else if (sort === 'category')
+    out.sort(
+      (a, b) =>
+        a.categoryLabel.localeCompare(b.categoryLabel) || a.name.localeCompare(b.name),
+    );
+  else
+    out.sort(
+      (a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)),
+    );
+  return out;
+}
+
+function ProvChip({ app, className }: { app: AppRecord; className?: string }) {
+  if (app.provenance === 'official') {
+    return <span className={`apps-prov ${className ?? ''}`}>official</span>;
+  }
+  return (
+    <span className={`apps-prov apps-prov--community ${className ?? ''}`}>
+      {`@github:${app.provenance.github}`}
+    </span>
+  );
+}
+
+function Cta({ app }: { app: AppRecord }) {
+  return (
+    <>
+      <PlatformLink className="apps-open" path={presentRoute(app.repo, app.entry)}>
+        Open
+      </PlatformLink>
+      <PlatformLink className="apps-fork" path={editRoute(app.repo, app.entry)}>
+        Fork
+      </PlatformLink>
+    </>
+  );
+}
+
+// The directory's card, rendered identically by the featured band and by the
+// grid view — one component, so the two cannot drift.
+function DirectoryCard({ app }: { app: AppRecord }) {
+  return (
+    <AppCard
+      app={app}
+      variant="directory"
+      chip={<ProvChip app={app} className="apps-card-prov" />}
+      actions={<Cta app={app} />}
+    />
+  );
+}
+
+export default function Apps() {
+  const [filters, setFilters] = useState<Filters>({
+    cats: new Set(),
+    provs: new Set(),
+    caps: new Set(),
+  });
+  const [sort, setSort] = useState<SortKey>('featured');
+  const [view, setView] = useState<View>('rows');
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  // Counts are computed from the FULL dataset per facet (independent of state).
+  const catCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of APPS) m.set(a.category, (m.get(a.category) ?? 0) + 1);
+    return m;
+  }, []);
+  const provCounts = useMemo(() => {
+    const m = new Map<ProvKey, number>();
+    for (const a of APPS) {
+      const k = provKey(a);
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return m;
+  }, []);
+  const capCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of APPS) for (const c of a.caps ?? []) m.set(c, (m.get(c) ?? 0) + 1);
+    return m;
+  }, []);
+
+  const results = useMemo(
+    () => sortApps(APPS.filter((a) => matches(a, filters)), sort),
+    [filters, sort],
+  );
+
+  const activeCount = filters.cats.size + filters.provs.size + filters.caps.size;
+  const empty = results.length === 0;
+
+  const clear = () =>
+    setFilters({ cats: new Set(), provs: new Set(), caps: new Set() });
+
+  const toggleCat = (slug: string) =>
+    setFilters((f) => ({ ...f, cats: toggle(f.cats, slug) }));
+  const toggleProv = (key: ProvKey) =>
+    setFilters((f) => ({ ...f, provs: toggle(f.provs, key) }));
+  const toggleCap = (slug: string) =>
+    setFilters((f) => ({ ...f, caps: toggle(f.caps, slug) }));
+
+  // R3-513 — one directory: the former showcase grid is a featured band at the
+  // top of /apps, rendered with the SAME card the directory grid uses.
+  const featured = useMemo(() => APPS.filter((a) => a.featured), []);
+
+  return (
+    <div className="apps-root">
+      <span className="apps-tag">/APPS</span>
+      <h1 className="apps-title">Apps built on immediately.run.</h1>
+      <p className="apps-deck">
+        Browse by category, author, or what an app is allowed to touch.
+      </p>
+
+      {featured.length > 0 && (
+        <section className="apps-featured" aria-label="Featured apps">
+          <div className="apps-grid">
+            {featured.map((a) => (
+              <DirectoryCard app={a} key={a.repo} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="apps-layout">
+        <aside className="apps-rail">
+          <div>
+            <div className="apps-facet-head">Category</div>
+            <div className="apps-facet-list">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.slug}
+                  type="button"
+                  className="apps-facet-row"
+                  aria-pressed={filters.cats.has(c.slug)}
+                  onClick={() => toggleCat(c.slug)}
+                >
+                  <span
+                    className="apps-facet-dot"
+                    style={{ background: CAT_DOT }}
+                  />
+                  <span className="apps-facet-label">{c.label}</span>
+                  <span className="apps-facet-count">
+                    {catCounts.get(c.slug) ?? 0}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="apps-facet-head">Provenance</div>
+            <div className="apps-facet-list">
+              {PROVENANCES.filter((p) => (provCounts.get(p.key) ?? 0) > 0).length ===
+              0 ? (
+                <span className="apps-facet-empty">No authors yet.</span>
+              ) : (
+                PROVENANCES.map((p) => {
+                  const n = provCounts.get(p.key) ?? 0;
+                  if (n === 0) return null;
+                  return (
+                    <button
+                      key={p.key}
+                      type="button"
+                      className="apps-facet-row"
+                      aria-pressed={filters.provs.has(p.key)}
+                      onClick={() => toggleProv(p.key)}
+                    >
+                      <span
+                        className="apps-facet-dot"
+                        style={{ background: PROV_DOT }}
+                      />
+                      <span className="apps-facet-label">{p.label}</span>
+                      <span className="apps-facet-count">{n}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div>
+            <div className="apps-facet-head apps-facet-head--tight">Capability</div>
+            <p className="apps-facet-help">Filter by what an app requests.</p>
+            <div className="apps-facet-list">
+              {CAPABILITIES.map((c) => (
+                <button
+                  key={c.slug}
+                  type="button"
+                  className="apps-facet-row apps-facet-row--mono"
+                  aria-pressed={filters.caps.has(c.slug)}
+                  onClick={() => toggleCap(c.slug)}
+                >
+                  <span
+                    className="apps-facet-dot"
+                    style={{ background: CAP_DOT }}
+                  />
+                  <span className="apps-facet-label">{c.label}</span>
+                  <span className="apps-facet-count">
+                    {capCounts.get(c.slug) ?? 0}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        <div>
+          <div className="apps-results-bar">
+            <span className="apps-count">{results.length} apps</span>
+            <button
+              type="button"
+              className="apps-filters-btn"
+              onClick={() => setSheetOpen(true)}
+            >
+              Filters {activeCount}
+            </button>
+            <div className="apps-controls">
+              <div className="apps-pillgroup" role="group" aria-label="Sort">
+                {SORTS.map((s) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    className="apps-pill"
+                    aria-pressed={sort === s.key}
+                    onClick={() => setSort(s.key)}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+              <div className="apps-pillgroup" role="group" aria-label="View">
+                <button
+                  type="button"
+                  className="apps-pill apps-pill--view"
+                  aria-pressed={view === 'rows'}
+                  aria-label="List view"
+                  onClick={() => setView('rows')}
+                >
+                  Rows
+                </button>
+                <button
+                  type="button"
+                  className="apps-pill apps-pill--view"
+                  aria-pressed={view === 'grid'}
+                  aria-label="Grid view"
+                  onClick={() => setView('grid')}
+                >
+                  Grid
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {empty ? (
+            <div className="apps-empty">
+              <div className="apps-empty-title">No apps match these filters.</div>
+              <button type="button" className="apps-empty-btn" onClick={clear}>
+                Clear filters →
+              </button>
+            </div>
+          ) : view === 'rows' ? (
+            <ul className="apps-rows" aria-label="Apps">
+              {results.map((a) => (
+                <li className="apps-row" key={a.repo}>
+                  <div className="apps-row-main">
+                    <div className="apps-row-title">
+                      <span className="apps-row-name">{a.name}</span>
+                      <ProvChip app={a} />
+                    </div>
+                    <div className="apps-row-blurb">{a.blurb}</div>
+                  </div>
+                  <div className="apps-row-tags">
+                    <span className="apps-tag-chip">{a.categoryLabel}</span>
+                    {(a.caps ?? []).map((c) => (
+                      <span className="apps-tag-chip apps-tag-chip--cap" key={c}>
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                  <Cta app={a} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="apps-grid">
+              {results.map((a) => (
+                <DirectoryCard app={a} key={a.repo} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {sheetOpen && (
+        <div
+          className="apps-sheet-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Filters"
+          onClick={() => setSheetOpen(false)}
+        >
+          <div className="apps-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="apps-sheet-head">
+              <span className="apps-sheet-title">Filters</span>
+              <button
+                type="button"
+                className="apps-sheet-close"
+                aria-label="Close filters"
+                onClick={() => setSheetOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="apps-sheet-group">Sort</div>
+            <div className="apps-sheet-chips">
+              {SORTS.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  className="apps-sheet-chip"
+                  aria-pressed={sort === s.key}
+                  onClick={() => setSort(s.key)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="apps-sheet-group">Category</div>
+            <div className="apps-sheet-chips">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.slug}
+                  type="button"
+                  className="apps-sheet-chip"
+                  aria-pressed={filters.cats.has(c.slug)}
+                  onClick={() => toggleCat(c.slug)}
+                >
+                  {c.label} {catCounts.get(c.slug) ?? 0}
+                </button>
+              ))}
+            </div>
+
+            <div className="apps-sheet-group">Provenance</div>
+            {PROVENANCES.filter((p) => (provCounts.get(p.key) ?? 0) > 0).length ===
+            0 ? (
+              <div className="apps-sheet-empty">No authors yet.</div>
+            ) : (
+              <div className="apps-sheet-chips">
+                {PROVENANCES.map((p) => {
+                  const n = provCounts.get(p.key) ?? 0;
+                  if (n === 0) return null;
+                  return (
+                    <button
+                      key={p.key}
+                      type="button"
+                      className="apps-sheet-chip"
+                      aria-pressed={filters.provs.has(p.key)}
+                      onClick={() => toggleProv(p.key)}
+                    >
+                      {p.label} {n}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="apps-sheet-group">Capability</div>
+            <div className="apps-sheet-chips">
+              {CAPABILITIES.map((c) => (
+                <button
+                  key={c.slug}
+                  type="button"
+                  className="apps-sheet-chip apps-sheet-chip--mono"
+                  aria-pressed={filters.caps.has(c.slug)}
+                  onClick={() => toggleCap(c.slug)}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              className="apps-sheet-show"
+              onClick={() => setSheetOpen(false)}
+            >
+              Show {results.length} apps
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+import './changelog.css';
+import { useState } from 'react';
+import {
+  CHANGELOG,
+  FILTER_CHIPS,
+  BADGE_LABEL,
+  type FilterKind,
+  type ChangelogEntry,
+} from './data';
+import SiteLink from '../../components/SiteLink';
+
+export default function Changelog() {
+  const [filter, setFilter] = useState<FilterKind>('all');
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+
+  const entries =
+    filter === 'all'
+      ? CHANGELOG
+      : CHANGELOG.filter((e) => e.kind === filter);
+
+  const toggle = (id: string) =>
+    setOpen((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  return (
+    <section className="cl-section" aria-labelledby="cl-title">
+      <span className="cl-tag">/NEWS</span>
+      <h1 id="cl-title" className="cl-title">
+        What&apos;s new.
+      </h1>
+      <p className="cl-deck">Releases, features, and notes — newest first.</p>
+
+      <div className="cl-chips" role="group" aria-label="Filter changelog by kind">
+        {FILTER_CHIPS.map((chip) => (
+          <button
+            key={chip.key}
+            type="button"
+            className="cl-chip"
+            aria-pressed={filter === chip.key}
+            onClick={() => setFilter(chip.key)}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+
+      {entries.length === 0 ? (
+        <div className="cl-empty">
+          <div className="cl-empty-title">Nothing shipped yet.</div>
+          <p className="cl-empty-sub">Follow along.</p>
+        </div>
+      ) : (
+        <>
+          <ol className="cl-timeline">
+            {entries.map((entry) => (
+              <Entry
+                key={entry.id}
+                entry={entry}
+                isOpen={!!open[entry.id]}
+                onToggle={() => toggle(entry.id)}
+              />
+            ))}
+          </ol>
+          {/* The RSS/Atom link is gone rather than repointed: no feed is generated in either
+              environment, so it 404'd everywhere, and a dead link on a "polling for changes"
+              affordance is worse than no affordance. Bring it back WITH a generated feed —
+              `check-corpora.mjs` is where that would be emitted, next to `public/llms.txt`. */}
+        </>
+      )}
+    </section>
+  );
+}
+
+function Entry({
+  entry,
+  isOpen,
+  onToggle,
+}: {
+  entry: ChangelogEntry;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const hasDetail = !!entry.detail;
+  const detailId = `cl-detail-${entry.id}`;
+
+  return (
+    <li id={entry.id} className="cl-entry">
+      <div className="cl-meta">
+        <span className="cl-date">{entry.date}</span>
+        <span className={`cl-badge cl-badge--${entry.kind}`}>
+          {BADGE_LABEL[entry.kind]}
+        </span>
+        {entry.version && <span className="cl-version">{entry.version}</span>}
+      </div>
+
+      <div className="cl-msg">{entry.message}</div>
+
+      {(hasDetail || entry.docHref) && (
+        <div className="cl-actions">
+          {hasDetail && (
+            <button
+              type="button"
+              className="cl-toggle"
+              aria-expanded={isOpen}
+              aria-controls={detailId}
+              onClick={onToggle}
+            >
+              {isOpen ? 'less ↑' : 'details →'}
+            </button>
+          )}
+          {entry.docHref && (
+            <SiteLink className="cl-doc" to={entry.docHref}>
+              documented in →
+            </SiteLink>
+          )}
+        </div>
+      )}
+
+      {hasDetail && isOpen && (
+        <div id={detailId} className="cl-detail">
+          <p className="cl-detail-p">{entry.detail}</p>
+          {entry.bullets && entry.bullets.length > 0 && (
+            <ul className="cl-detail-list">
+              {entry.bullets.map((b, i) => (
+                <li key={i}>{b}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+// Reverse-chronological changelog — newest first.
+// Adding an entry = adding a record (agent-writable). This same data can feed
+// the landing-page teaser (latest 1) and the RSS/Atom feed.
+
+export type BadgeKind = 'feat' | 'rel' | 'note';
+
+export interface ChangelogEntry {
+  /** Stable anchor id, used for /changelog#<id> deep links. */
+  id: string;
+  /** Mono short date, e.g. "may 26". */
+  date: string;
+  kind: BadgeKind;
+  /** Optional version/tag, e.g. "v2.4". */
+  version?: string;
+  /** One-line message in sentence case. */
+  message: string;
+  /** Optional expandable detail paragraph. */
+  detail?: string;
+  /** Optional bullet list shown inside the expanded detail. */
+  bullets?: string[];
+  /** Optional link into the reference, e.g. "/docs/capabilities". */
+  docHref?: string;
+}
+
+export const BADGE_LABEL: Record<BadgeKind, string> = {
+  feat: 'feature',
+  rel: 'release',
+  note: 'note',
+};
+
+export type FilterKind = 'all' | BadgeKind;
+
+export interface FilterChip {
+  key: FilterKind;
+  label: string;
+}
+
+export const FILTER_CHIPS: FilterChip[] = [
+  { key: 'all', label: 'all' },
+  { key: 'feat', label: 'feature' },
+  { key: 'rel', label: 'release' },
+  { key: 'note', label: 'note' },
+];
+
+export const CHANGELOG: ChangelogEntry[] = [
+  {
+    id: 'tools-activity',
+    date: 'aug 28',
+    kind: 'feat',
+    message: 'typecheck, lint and build problems in one list.',
+    detail:
+      'The Tools activity runs a typecheck and a lint over the app you have open and lists every problem in one tree, whichever tool reported it. Clicking a row switches activity, opens the file, and puts the caret on the character.',
+    bullets: [
+      'a run says how it fell short rather than silently truncating.',
+      'a run marks itself out of date when a file changes underneath it.',
+    ],
+  },
+  {
+    id: 'present-mode-chrome',
+    date: 'aug 27',
+    kind: 'feat',
+    message: 'present mode no longer stacks a second navbar over your app.',
+    detail:
+      'The pull-down tab now opens a host-owned platform menu — an anchored panel on desktop, a bottom sheet on mobile — and the app dims and insets behind it. Nothing is persisted and the app frame is never resized.',
+  },
+  {
+    id: 'llm-providers',
+    date: 'aug 24',
+    kind: 'feat',
+    message: 'connect a language model by picking a provider, not by naming a secret.',
+    detail:
+      'Choose a provider, follow a deep link to its key page, and paste the key. The platform sets the credential type and the destination it is bound to; you never see the words api-key or bearer-token. Anthropic, OpenAI, Google Gemini, OpenRouter, and any OpenAI-compatible endpoint.',
+    bullets: [
+      'the key is sealed with your passkey and used without ever being readable by an app.',
+      'errors say out of credit or key rejected, not a generic auth failure.',
+    ],
+    docHref: '/docs/capabilities/model',
+  },
+  {
+    id: 'editor-as-app',
+    date: 'jul 07',
+    kind: 'rel',
+    message: 'the code editor is an ordinary immediately.run app.',
+    detail:
+      'The editor is no longer built into the host — it is a repo you can fork and replace like any other part of the interface. The native editor was deleted once the app reached parity.',
+    docHref: '/docs/start/overview',
+  },
+  {
+    id: 'space-invitations',
+    date: 'jul 02',
+    kind: 'feat',
+    message: 'sharing a space is an invitation you accept, not a folder that appears.',
+    detail:
+      'An owner offers access and the recipient accepts from their own invitations list, so nothing joins your account without you agreeing to it. Roles are reader, writer, or owner, and revocation takes effect live.',
+    docHref: '/docs/capabilities/identity',
+  },
+];
+
+import './docs.css';
+import { useCallback, useState } from 'react';
+import type { ReactNode } from 'react';
+import {
+  DOC_GROUPS,
+  DOC_PAGES,
+  CAP_INDEX,
+  llmsGroups,
+  LLMS_NAV_ITEM,
+  pageHref,
+  tocFor,
+  findPage,
+  neighbors,
+  pageSourcePath,
+} from './data';
+import type { DocGroup, DocPage, TocItem } from './data';
+import { CORPUS_COMPONENTS } from '../../corpus/components';
+import SiteLink from '../../components/SiteLink';
+import { LLMS_TXT } from '../../data/corpusIndex';
+import { TUTORIALS } from '../tutorials/data';
+import { rawUrl, sourceUrl } from '../../lib/routes';
+import { SDK_REFERENCE_URL, sdkReferenceUrl } from '../../lib/urls';
+
+// The /docs section: the technical reference, served to two audiences from one
+// source. The same typed records in data.ts render both the human article view
+// and the machine surface (llms.txt preview + structured capability index), so
+// the two can never drift.
+//
+// Routing is by the `rest` segments after `docs`:
+//   []                  → docs landing (group index)
+//   ['agents','llms']   → machine surface
+//   [group, slug]       → an article, when it resolves
+//   anything else       → an inline 404
+//
+// One default export per file (lint enforces the Fast Refresh rule); the small
+// child components below export nothing.
+export default function Docs({ rest }: { rest: string[] }) {
+  const [copied, setCopied] = useState<string>('');
+
+  const copy = useCallback((text: string, key: string) => {
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopied(key);
+        window.setTimeout(() => setCopied((c) => (c === key ? '' : c)), 1600);
+      },
+      () => undefined,
+    );
+  }, []);
+
+  const goAnchor = useCallback((id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  // Resolve the current view before any branching in JSX (hooks already ran).
+  const isLlms = rest[0] === 'agents' && rest[1] === 'llms';
+  const page = rest.length >= 2 ? findPage(rest[0], rest[1]) : undefined;
+  const active = isLlms ? 'agents/llms' : page ? `${page.group}/${page.slug}` : '';
+
+  let main: ReactNode;
+  let toc: TocItem[] = [];
+  if (isLlms) {
+    main = <MachineSurface copied={copied} copy={copy} />;
+  } else if (rest.length === 0) {
+    main = <DocsIndex />;
+  } else if (page) {
+    toc = tocFor(page);
+    main = <Article page={page} />;
+  } else {
+    main = <NotFound />;
+  }
+
+  return (
+    <div className="docs-layout">
+      <Sidebar active={active} />
+      <article className="docs-article">{main}</article>
+      <aside className="docs-toc" aria-label="On this page">
+        {toc.length > 0 && <Toc items={toc} go={goAnchor} />}
+      </aside>
+    </div>
+  );
+}
+
+function Sidebar({ active }: { active: string }) {
+  return (
+    <aside className="docs-aside" aria-label="Documentation navigation">
+      <span className="docs-tag">/DOCS</span>
+      {DOC_GROUPS.map((g: DocGroup) => {
+        const pages = DOC_PAGES.filter((p) => p.group === g.key);
+        const items: Pick<DocPage, 'group' | 'slug' | 'title'>[] =
+          g.key === 'agents' ? [...pages, LLMS_NAV_ITEM] : pages;
+        if (items.length === 0) return null;
+        return (
+          <div key={g.key}>
+            <div className="docs-navgroup-label">{g.group}</div>
+            <nav className="docs-navlinks">
+              {items.map((p) => {
+                const href = pageHref(p);
+                const isActive = active === `${p.group}/${p.slug}`;
+                return (
+                  <SiteLink
+                    key={p.slug}
+                    to={href}
+                    className={`docs-navlink${isActive ? ' docs-navlink--active' : ''}`}
+                    aria-current={isActive ? 'page' : undefined}
+                  >
+                    {p.title.replace(/\.$/, '')}
+                  </SiteLink>
+                );
+              })}
+            </nav>
+          </div>
+        );
+      })}
+    </aside>
+  );
+}
+
+function Toc({ items, go }: { items: TocItem[]; go: (id: string) => void }) {
+  return (
+    <>
+      <div className="docs-toc-label">On this page</div>
+      <div className="docs-toc-links">
+        {items.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className="docs-toc-link"
+            onClick={() => go(t.id)}
+          >
+            {t.label.replace(/\.$/, '')}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// The docs index, re-cut (R3-516; FRONT_DOOR_IA §8) into THREE labelled
+// destinations, because in-app help links here and the API reference is
+// generated elsewhere: product documentation on this site (stable URLs — what
+// in-app help links to), tutorials on this site, and the generated API
+// reference off-site. The engineering wiki is deliberately NOT here — footer
+// only (Contributors). The /DOCS tag, the h1 and every article route are
+// unchanged.
+function DocsIndex() {
+  return (
+    <div>
+      <span className="docs-machine-tag">/DOCS</span>
+      <h1 className="docs-machine-h1">Reference, for humans and agents.</h1>
+      <p className="docs-machine-lead">
+        The SDK, the capability model, providers, spaces, and agents — one source, two views.
+      </p>
+      <div className="docs-index-grid docs-index-grid--recut">
+        {/* 1 — product documentation, this site. */}
+        <section className="docs-index-card docs-index-dest" aria-label="Product documentation">
+          <div className="docs-navgroup-label">this site · /docs/…</div>
+          <div className="docs-index-name">How the platform works.</div>
+          <p className="docs-index-lead">
+            Product documentation. These URLs are stable; in-app help links here.
+          </p>
+          <ul className="docs-index-list">
+            {DOC_GROUPS.filter((g) => g.key !== 'agents').flatMap((g) =>
+              DOC_PAGES.filter((p) => p.group === g.key).map((p) => (
+                <li key={p.group + p.slug}>
+                  <SiteLink to={pageHref(p)}>{p.title.replace(/\.$/, '')}</SiteLink>
+                </li>
+              )),
+            )}
+          </ul>
+        </section>
+        {/* 2 — tutorials, this site. */}
+        <section className="docs-index-card docs-index-dest" aria-label="Tutorials">
+          <div className="docs-navgroup-label">this site · /tutorials</div>
+          <div className="docs-index-name">Do one thing, end to end.</div>
+          <p className="docs-index-lead">Step-by-step, from an empty repo to a running app.</p>
+          <ul className="docs-index-list">
+            {TUTORIALS.map((t) => (
+              <li key={t.slug}>
+                <SiteLink to={`/tutorials/${t.slug}`}>{t.title.replace(/\.$/, '')}</SiteLink>
+              </li>
+            ))}
+          </ul>
+        </section>
+        {/* 3 — the generated API reference, off-site. */}
+        <section className="docs-index-card docs-index-dest" aria-label="API reference">
+          <div className="docs-navgroup-label">external · generated</div>
+          <div className="docs-index-name">Every export, with its signature.</div>
+          <p className="docs-index-lead">
+            The API reference is generated from the SDK's own sources and lives off-site.
+          </p>
+          <ul className="docs-index-list">
+            <li>
+              <a href={SDK_REFERENCE_URL} target="_blank" rel="noopener noreferrer">
+                API reference
+              </a>
+            </li>
+            <li>
+              <a href={sdkReferenceUrl('llms.txt')} target="_blank" rel="noopener noreferrer">
+                llms.txt
+              </a>
+            </li>
+            <li>
+              <a href={sdkReferenceUrl('api.json')} target="_blank" rel="noopener noreferrer">
+                api.json
+              </a>
+            </li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function NotFound() {
+  return (
+    <div className="docs-404">
+      <div className="docs-404-title">This page didn't load.</div>
+      <p className="docs-404-body">Try another topic from the sidebar, or head back to the docs index.</p>
+      <SiteLink className="docs-btn docs-btn--open" to="/docs">
+        All docs →
+      </SiteLink>
+    </div>
+  );
+}
+
+function MachineSurface({
+  copied,
+  copy,
+}: {
+  copied: string;
+  copy: (text: string, key: string) => void;
+}) {
+  const groups = llmsGroups();
+  // The generated bytes, not a second rendering of them: `LLMS_TXT` is emitted by
+  // `check-corpora.mjs` alongside `public/llms.txt`, so Copy hands over exactly what
+  // the file contains and the two cannot drift.
+  const raw = LLMS_TXT;
+
+  return (
+    <div>
+      <span className="docs-machine-tag">/DOCS · MACHINE SURFACE</span>
+      <h1 className="docs-machine-h1">Reference, for agents.</h1>
+      <p className="docs-machine-lead">
+        A curated, link-rich index in the llms.txt convention — the platform definition, every
+        reference page with a stable URL, and the repo path of the source behind it. For the
+        SDK's own surface, go to its generated reference: it is produced by TypeDoc from the
+        published package on every release, so unlike this page it cannot drift from the code.
+      </p>
+      <div className="docs-pills">
+        {/* The SDK's llms.txt / api.json / HTML reference are GENERATED (typedoc + gen-llms
+            in the SDK's release CI) and published to its own Pages origin. This site used to
+            link none of them and hand-authored a couple of signatures instead — which is how
+            a `requestFolder()` that never existed survived in the reference for months.
+            Point at the generated artifact; do not restate it here. */}
+        <a
+          className="docs-pill docs-pill--primary"
+          href={sdkReferenceUrl('llms.txt')}
+          target="_blank"
+          rel="noopener"
+        >
+          SDK llms.txt
+        </a>
+        <a
+          className="docs-pill"
+          href={SDK_REFERENCE_URL}
+          target="_blank"
+          rel="noopener"
+        >
+          SDK API reference
+        </a>
+        {/* One real URL. Both of these used to be root-relative paths to a file that was
+            generated in neither environment — and inside the sandboxed iframe a root-relative
+            href resolves against `sandbox.<host>` on top of that. It is now a repo file,
+            served from the platform's files space. */}
+        <a className="docs-pill docs-pill--primary" href={rawUrl('public/llms.txt')}>
+          llms.txt
+        </a>
+      </div>
+
+      <div className="docs-llms">
+        <div className="docs-llms-bar">
+          <span className="docs-llms-name">llms.txt</span>
+          <button
+            type="button"
+            className="docs-copy"
+            onClick={() => copy(raw, 'llms')}
+            aria-label="Copy llms.txt"
+          >
+            {copied === 'llms' ? 'Copied' : 'Copy'}
+          </button>
+          <span className="docs-llms-mime">text/plain</span>
+        </div>
+        <div className="docs-llms-body">
+          <div className="docs-llms-h1"># immediately.run</div>
+          <div>
+            &gt; Apps you can take apart. Run any React/TS app from its source, in the browser. Fork
+            and contribute back from the page itself.
+          </div>
+          <div className="docs-llms-spacer" />
+          {groups.map((g) => (
+            <div key={g.tag}>
+              <div className="docs-llms-tag">## {g.tag}</div>
+              {g.items.map((it) => (
+                <div key={it.path}>
+                  - [{it.title}]({it.path}): {it.desc}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <h2 className="docs-h2" id="capability-index">
+        Structured capability index
+      </h2>
+      <p className="docs-p">
+        The capability surface as machine data — so an agent can discover what it can ask for, and
+        how, without scraping HTML.
+      </p>
+      <div className="docs-capwrap" role="table" aria-label="Capability index">
+        <div className="docs-caprow docs-caprow--head" role="row">
+          <span role="columnheader">name</span>
+          <span role="columnheader">description</span>
+          <span role="columnheader">consent</span>
+          <span role="columnheader">rejections</span>
+        </div>
+        {CAP_INDEX.map((c) => (
+          <div className="docs-caprow" role="row" key={c.name}>
+            <span className="docs-cap-name" role="cell">
+              {c.name}
+            </span>
+            <span className="docs-cap-desc" role="cell">
+              {c.desc}
+            </span>
+            <span className="docs-cap-mono" role="cell">
+              {c.consent}
+            </span>
+            <span className="docs-cap-mono" role="cell">
+              {c.rejects}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="docs-md-note">
+        {/* This claimed a `.md` suffix that was never generated. The real bytes are the
+            corpus `.mdx`, which the platform already serves from its files space. */}
+        Every page links to its own source — the corpus{' '}
+        <span className="docs-md-suffix">.mdx</span>, free of site chrome.
+      </p>
+    </div>
+  );
+}
+
+function Article({ page }: { page: DocPage }) {
+  const { prev, next } = neighbors(page);
+  const mdSource = pageSourcePath(page);
+
+  return (
+    <>
+      <h1 className="docs-h1">{page.title}</h1>
+      <p className="docs-lead">{page.lead}</p>
+      <page.Body components={CORPUS_COMPONENTS} />
+
+      <nav className="docs-nav" aria-label="Pagination">
+        {prev ? (
+          <SiteLink className="docs-navcard" to={pageHref(prev)}>
+            <div className="docs-navcard-dir">← Previous</div>
+            <div className="docs-navcard-label">{prev.title.replace(/\.$/, '')}</div>
+          </SiteLink>
+        ) : (
+          <span className="docs-navcard docs-navcard--ghost" aria-hidden="true" />
+        )}
+        {next ? (
+          <SiteLink className="docs-navcard docs-navcard--next" to={pageHref(next)}>
+            <div className="docs-navcard-dir">Next →</div>
+            <div className="docs-navcard-label">{next.title.replace(/\.$/, '')}</div>
+          </SiteLink>
+        ) : (
+          <span className="docs-navcard docs-navcard--ghost" aria-hidden="true" />
+        )}
+      </nav>
+
+      <div className="docs-footnote">
+        Reading this as an agent? Start at{' '}
+        <SiteLink to="/docs/agents/llms">/llms.txt</SiteLink> · source:{' '}
+        <a href={sourceUrl(mdSource)}>{mdSource}</a>
+      </div>
+    </>
+  );
+}
+
+// The index over the /docs corpus. A plain .ts module (NOT a component file), so it may
+// export data, types, and helpers freely.
+//
+// One authored source, two renderings: the human article view and the machine surface
+// (llms.txt preview + structured capability index) are both derived from the same
+// frontmatter — they cannot drift. Since the corpus conversion the PROSE lives in
+// `docs/*.mdx` and this module indexes it; only the capability table below is still
+// authored here, because it is a table, not an article.
+
+import type { ComponentType } from 'react';
+import { CORPUS_ENTRIES, corpusEntries } from '../../data/corpusIndex';
+import type { CorpusHeading } from '../../data/corpusIndex';
+
+/* ----------------------------------------------------------------- types -- */
+
+export interface DocParam {
+  name: string;
+  type: string;
+  desc: string;
+}
+
+export interface DocRejection {
+  code: string;
+  meaning: string;
+}
+
+export interface DocApi {
+  kind: 'api';
+  id: string;
+  toc: string;
+  sig: string;
+  cap: string;
+  capHref: string;
+  params: DocParam[];
+  returns: string;
+  rejections: DocRejection[];
+}
+
+/**
+ * A documentation page — now BACKED BY MDX in the `docs/` corpus rather than by a block
+ * array here.
+ *
+ * What moved and why: the prose was 440 lines of `{kind:'p', text:'…'}` records, which meant
+ * a typo fix was a code change and `tsc -b` stood between an author and a published
+ * sentence. The prose is now an `.mdx` file with frontmatter, and this module is the INDEX
+ * over it. What did NOT move is the structured data — an API signature's params and
+ * rejection codes are still typed records, passed to `<ApiSignature/>` as JSX props, because
+ * they are tabular data with a fixed shape that the machine surface reads too.
+ *
+ * `Body` is the compiled MDX component; render it with the corpus component map.
+ */
+export interface DocPage {
+  group: string;
+  slug: string;
+  title: string;
+  /** One-line description — reused verbatim in the llms.txt index. */
+  lead: string;
+  Body: ComponentType<{ components?: Record<string, unknown> }>;
+  headings: CorpusHeading[];
+}
+
+export interface DocGroup {
+  /** Mono uppercase label shown in the sidebar. */
+  group: string;
+  /** URL segment, e.g. "sdk" → /docs/sdk/<slug>. */
+  key: string;
+}
+
+export interface CapEntry {
+  name: string;
+  desc: string;
+  consent: string;
+  rejects: string;
+}
+
+export interface TocItem {
+  id: string;
+  label: string;
+}
+
+/* -------------------------------------------------------------- helpers -- */
+
+/** The repo-relative source of a page — the bytes behind it, in the platform's files space.
+ *  The corpus is `.mdx`; the site used to advertise a per-page `.md` that was never generated
+ *  in either environment, so every "raw" link 404'd. */
+export function pageSourcePath(p: { group: string; slug: string }): string {
+  return `docs/${p.group}--${p.slug}.mdx`;
+}
+
+export function pageHref(p: { group: string; slug: string }): string {
+  return `/docs/${p.group}/${p.slug}`;
+}
+
+/** The article's H2s, in document order, as TOC anchors. The ids come from the checker,
+ *  which computes them with the same `headingId()` the remark plugin renders — so a TOC link
+ *  and its heading cannot disagree. */
+export function tocFor(page: DocPage): TocItem[] {
+  return page.headings.filter((h) => h.depth === 2).map((h) => ({ id: h.id, label: h.text }));
+}
+
+export function findPage(group: string, slug: string): DocPage | undefined {
+  return DOC_PAGES.find((p) => p.group === group && p.slug === slug);
+}
+
+/** Linear prev/next across the whole reading order (sidebar order). */
+export function neighbors(page: DocPage): {
+  prev?: DocPage;
+  next?: DocPage;
+} {
+  const i = DOC_PAGES.indexOf(page);
+  return {
+    prev: i > 0 ? DOC_PAGES[i - 1] : undefined,
+    next: i >= 0 && i < DOC_PAGES.length - 1 ? DOC_PAGES[i + 1] : undefined,
+  };
+}
+
+/* ----------------------------------------------------------------- pages -- */
+// Derived from the `docs/` corpus. The file name carries the route:
+// `<group>--<slug>.mdx` → `/docs/<group>/<slug>`. Reading order is the frontmatter
+// `order`, which the checker requires, so the sidebar cannot silently reorder itself when
+// a file is renamed.
+
+export const DOC_PAGES: DocPage[] = corpusEntries('docs').map((e) => {
+  const [group, slug] = e.slug.split('--');
+  return {
+    group,
+    slug,
+    title: String(e.frontmatter.title),
+    lead: String(e.frontmatter.lead),
+    Body: CORPUS_ENTRIES[e.path],
+    headings: e.headings,
+  };
+});
+
+/** The sidebar's synthetic entry for the machine surface. It is a ROUTE, not a corpus
+ *  entry — there is no `agents/llms.mdx` because the page is generated from the capability
+ *  table and the corpus frontmatter, not authored. Declared here so `Docs.tsx` does not have
+ *  to fabricate a half-populated `DocPage` to put it in the nav. */
+export const LLMS_NAV_ITEM: Pick<DocPage, 'group' | 'slug' | 'title' | 'lead'> = {
+  group: 'agents',
+  slug: 'llms',
+  title: 'Reference, for agents.',
+  lead: '',
+};
+
+/* ---------------------------------------------------------------- groups -- */
+
+export const DOC_GROUPS: DocGroup[] = [
+  { group: 'Getting started', key: 'start' },
+  { group: 'SDK', key: 'sdk' },
+  { group: 'Capabilities', key: 'capabilities' },
+  { group: 'Agents', key: 'agents' },
+];
+
+/* -------------------------------------------------- machine surface data -- */
+// The structured capability index — the same facts as the prose, as data an
+// agent can read without scraping HTML.
+
+export const CAP_INDEX: CapEntry[] = [
+  {
+    name: 'identity',
+    desc: 'A stable, opaque handle for the signed-in user. No token, no secret.',
+    consent: 'host session',
+    rejects: 'auth-required · forbidden',
+  },
+  {
+    name: 'filesystem',
+    desc: 'Read and (if granted) write the mounts the host gave your app.',
+    consent: 'per-mount',
+    rejects: 'forbidden · EROFS',
+  },
+  {
+    name: 'request-mount',
+    desc: 'Ask the user to grant a project folder inside a space, through host UI.',
+    consent: 'user picks the folder AND the mode',
+    rejects: 'cancelled · forbidden · auth-required',
+  },
+  {
+    name: 'invoke-task',
+    desc: 'Call a declared cross-app task contract, e.g. edit-file.',
+    consent: 'declared',
+    rejects: 'forbidden · invalid-params',
+  },
+  {
+    name: 'network',
+    desc: 'Fetch from explicitly allowed origins; no ambient cross-app reach.',
+    consent: 'per-origin',
+    rejects: 'forbidden · timeout',
+  },
+];
+
+/** The llms.txt index — the same pages, grouped, as a link-rich machine index. */
+export interface LlmsGroup {
+  tag: string;
+  items: { title: string; path: string; desc: string }[];
+}
+
+export function llmsGroups(): LlmsGroup[] {
+  return DOC_GROUPS.map((g) => ({
+    tag: g.group,
+    items: DOC_PAGES.filter((p) => p.group === g.key).map((p) => ({
+      title: p.title.replace(/\.$/, ''),
+      path: `/docs/${g.key}/${p.slug}`,
+      desc: p.lead,
+    })),
+  })).filter((g) => g.items.length > 0);
+}
+
+// R3-515 — the /new page (FRONT_DOOR_IA §7.1; APP_ONBOARDING §3.1/§3.4.1).
+//
+// HAND-OFF: when R3-164 lands, `generate` becomes the host's own flow and step
+// 4 ("Then run it") disappears. The route and the records stay — application
+// templates are more records, not more page.
+
+import './new.css';
+import SiteLink from '../../components/SiteLink';
+import { PlatformLink } from '@immediately-run/sdk/platformLink';
+import Omnibox from '../../components/Omnibox';
+import { TEMPLATES, type TemplateRecord } from '../../data/templates';
+import { GITHUB_APP_INSTALL_URL } from '../../lib/urls';
+
+/** The start button a record's `start` decides. `generate` links GitHub's
+ *  template-generate flow (new tab); `unavailable` has NO button — the reason
+ *  is stated instead; `run` opens the onboarding app. The start button is this
+ *  view's one gradient primary. */
+function StartButton({ record }: { record: TemplateRecord }) {
+  if (record.start.kind === 'generate') {
+    return (
+      <a
+        className="new-cta new-start"
+        href={`https://github.com/${record.repo}/generate`}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Start from this template →
+      </a>
+    );
+  }
+  if (record.start.kind === 'run') {
+    return (
+      <PlatformLink className="new-cta new-start" path={record.start.route}>
+        Start →
+      </PlatformLink>
+    );
+  }
+  return <p className="new-card-unavailable">Unavailable: {record.start.reason}</p>;
+}
+
+function TemplateCard({ record }: { record: TemplateRecord }) {
+  return (
+    <article className="new-card">
+      <span className="new-card-kind">{record.kind === 'blank' ? 'blank' : 'app'}</span>
+      <h3 className="new-card-name">{record.name}</h3>
+      <p style={{ color: 'var(--ink-2)', fontSize: '14.5px' }}>{record.pitch}</p>
+      <ul className="new-card-gives">
+        {record.gives.map((g) => (
+          <li key={g}>{g}</li>
+        ))}
+      </ul>
+      {record.example && (
+        <PlatformLink className="new-cta" path={`/present/github/immediately-run/${record.example}/main`}>
+          Try it live →
+        </PlatformLink>
+      )}
+      <StartButton record={record} />
+    </article>
+  );
+}
+
+export default function New() {
+  return (
+    <div className="new-root">
+      <span className="apps-tag">/NEW</span>
+      <h1 className="apps-title">Make an app.</h1>
+      <p className="apps-deck">
+        Three things and you are live: a GitHub account with the immediately.run app installed,
+        a repo generated from a starting point, and a push.
+      </p>
+
+      {/* Step zero — the one prerequisite the platform cannot perform for you. */}
+      <div className="new-install">
+        <span className="new-install-label">BEFORE YOU START</span>
+        <p className="new-install-copy">
+          Install the immediately.run GitHub App on your account. It lets the platform read your
+          repos and open pull requests. Running public apps does not need it; for a private app,
+          install it on that repo so the people you allow can run it.
+        </p>
+        <a className="new-cta" href={GITHUB_APP_INSTALL_URL} target="_blank" rel="noopener noreferrer">
+          Install the app →
+        </a>
+      </div>
+
+      <section aria-labelledby="new-starting">
+        <h2 id="new-starting" style={{ font: '800 26px var(--disp)', color: 'var(--ink)' }}>
+          Pick a starting point.
+        </h2>
+        <div className="new-template-cards">
+          {TEMPLATES.map((record) => (
+            <TemplateCard key={record.slug} record={record} />
+          ))}
+        </div>
+      </section>
+
+      <section className="new-run-step" aria-labelledby="new-run">
+        <h2 id="new-run" style={{ font: '800 26px var(--disp)', color: 'var(--ink)' }}>
+          Then run it.
+        </h2>
+        <p className="apps-deck">
+          GitHub opens in a new tab and creates your repo. Come back and paste it here to run
+          it. Push to main and it updates on the next launch.
+        </p>
+        <Omnibox variant="new" />
+      </section>
+
+      <p className="publish-closing">
+        Prefer a walkthrough?{' '}
+        <SiteLink to="/tutorials/your-first-app">Tutorial: publish an app by pushing a repo →</SiteLink>
+      </p>
+    </div>
+  );
+}
+
+import './tutorials.css';
+import { useCallback } from 'react';
+import { TUTORIALS, findTutorial } from './data';
+import { CORPUS_COMPONENTS } from '../../corpus/components';
+import type { Tutorial } from './data';
+import SiteLink from '../../components/SiteLink';
+
+// The tutorials section, bound to #/tutorials (index) and #/tutorials/:slug (a page).
+// Static prose plus deep links that open the live platform pre-loaded to the right
+// state — "show, then go do it". One default-exported component for the whole section.
+export default function Tutorials({ rest }: { rest: string[] }) {
+  const slug = rest[0];
+
+  // Copy-to-clipboard moved into the corpus components (<CodeBlock/>, <DeepLink/>), which
+  // own the buttons that use it — so the section no longer threads a `copied` key through
+  // three levels of props to decide which button says "Copied".
+  const goStep = useCallback((id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  if (slug === undefined) {
+    return <TutorialIndex />;
+  }
+
+  const tut = findTutorial(slug);
+  if (!tut) {
+    return <NotFound />;
+  }
+
+  return <TutorialPage tut={tut} goStep={goStep} />;
+}
+
+function TutorialIndex() {
+  return (
+    <div className="tut tut-fade">
+      <header className="tut-head">
+        <span className="tag tut-tag">/TUTORIALS</span>
+        <h1 className="tut-h1">Do it once, then it's yours.</h1>
+        <p className="tut-deck">Three workflows, start to finish. Read a step, then open it live.</p>
+      </header>
+
+      <div className="tut-grid">
+        {TUTORIALS.map((t) => (
+          <SiteLink key={t.slug} className="tut-card" to={`/tutorials/${t.slug}`}>
+            <span className="tut-card-num grad-text">{t.num}</span>
+            <div className="tut-card-pillar">{t.pillar}</div>
+            <h2 className="tut-card-title">{t.title}</h2>
+            <p className="tut-card-outcome">{t.outcome}</p>
+            <div className="tut-card-meta">
+              <span className="tut-pill tut-pill-diff">{t.difficulty}</span>
+              {t.tags.map((g) => (
+                <span key={g} className="tut-pill">
+                  {g}
+                </span>
+              ))}
+              <span className="tut-card-time">{t.time}</span>
+            </div>
+          </SiteLink>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NotFound() {
+  return (
+    <div className="tut tut-fade">
+      <div className="tut-404">
+        <div className="tut-404-title">No such tutorial.</div>
+        <p className="tut-404-text">It may have moved. Head back to the index.</p>
+        <SiteLink className="tut-404-cta" to="/tutorials">
+          All tutorials →
+        </SiteLink>
+      </div>
+    </div>
+  );
+}
+
+function TutorialPage({ tut, goStep }: { tut: Tutorial; goStep: (id: string) => void }) {
+  return (
+    <div className="tut tut-fade">
+      <div className="tut-layout">
+        <article className="tut-article">
+          <SiteLink className="tut-back" to="/tutorials">
+            ← All tutorials
+          </SiteLink>
+          <h1 className="tut-page-title">{tut.title}</h1>
+
+          <div className="tut-meta-card">
+            <div>
+              <div className="tut-meta-label">You'll build</div>
+              <div className="tut-meta-val">{tut.outcome}</div>
+            </div>
+            <div>
+              <div className="tut-meta-label">Prerequisites</div>
+              <div className="tut-meta-val">{tut.prereqs}</div>
+            </div>
+            <div>
+              <div className="tut-meta-label">Time</div>
+              <div className="tut-meta-val">{tut.time}</div>
+            </div>
+          </div>
+
+          {/* The steps are the MDX body: each `###` heading opens a step, and the
+              corpus components (<CodeBlock/>, <Checkpoint/>, <DeepLink/>) render the
+              furniture that used to be optional fields on a step record. The numbered
+              rail below and the aside both key off the SAME heading ids the remark
+              plugin renders, so a step link always lands. */}
+          <div className="tut-body">
+            <tut.Body components={CORPUS_COMPONENTS} />
+          </div>
+
+          <div className="tut-next">
+            <div className="tut-next-label">Learn next</div>
+            <SiteLink className="tut-next-card" to={`/tutorials/${tut.next.slug}`}>
+              <span className="tut-next-title">{tut.next.label}</span>
+              <span className="tut-next-arrow">→</span>
+            </SiteLink>
+          </div>
+        </article>
+
+        <aside className="tut-aside">
+          <div className="tut-aside-label">Steps</div>
+          <div className="tut-aside-list">
+            {tut.steps.map((st, i) => (
+              <button key={st.id} type="button" className="tut-aside-item" onClick={() => goStep(st.id)}>
+                <span className="tut-aside-n">{i + 1}</span>
+                <span>{st.title}</span>
+              </button>
+            ))}
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+// The index over the /tutorials corpus. A data module, not a component file — it exports
+// records and types only.
+//
+// Deep-link routes are still data rather than buried in prose, so they stay agent-writable
+// and easy to verify — they are now `<DeepLink href="…"/>` in the MDX, which is the same
+// property with the prose around it in markdown instead of in a string literal.
+
+import type { ComponentType } from 'react';
+import { CORPUS_ENTRIES, corpusEntries } from '../../data/corpusIndex';
+import type { CorpusHeading } from '../../data/corpusIndex';
+
+/**
+ * A tutorial — now BACKED BY MDX in the `tutorials/` corpus.
+ *
+ * The steps used to be `TutorialStep` records with a `prose` string; a step's prose is
+ * exactly the kind of thing markdown is for and TypeScript is not. What stays typed is the
+ * metadata a reader scans before committing to a tutorial (outcome, prereqs, time,
+ * difficulty) — that is frontmatter now, and the checker requires every field, so a missing
+ * `time:` is a build failure rather than a blank cell.
+ *
+ * `steps` is derived from the entry's `###` headings, whose ids come from the same
+ * `headingId()` the remark plugin renders — so the step rail and the anchors it scrolls to
+ * cannot disagree.
+ */
+export interface TutorialStep {
+  id: string;
+  title: string;
+}
+
+export interface Tutorial {
+  slug: string;
+  num: string;
+  pillar: string;
+  title: string;
+  /** One-line outcome — what you'll have built. */
+  outcome: string;
+  prereqs: string;
+  time: string;
+  difficulty: string;
+  tags: string[];
+  steps: TutorialStep[];
+  Body: ComponentType<{ components?: Record<string, unknown> }>;
+  /** Where "learn next" points. */
+  next: { slug: string; label: string };
+}
+
+export const TUTORIALS: Tutorial[] = corpusEntries('tutorials').map((e) => ({
+  slug: e.slug,
+  num: String(e.frontmatter.num),
+  pillar: String(e.frontmatter.pillar),
+  title: String(e.frontmatter.title),
+  outcome: String(e.frontmatter.outcome),
+  prereqs: String(e.frontmatter.prereqs),
+  time: String(e.frontmatter.time),
+  difficulty: String(e.frontmatter.difficulty),
+  tags: (e.frontmatter.tags as string[]) ?? [],
+  steps: e.headings
+    .filter((h: CorpusHeading) => h.depth === 3)
+    .map((h: CorpusHeading) => ({ id: h.id, title: h.text })),
+  Body: CORPUS_ENTRIES[e.path],
+  next: {
+    slug: String(e.frontmatter.nextSlug ?? ''),
+    label: String(e.frontmatter.nextLabel ?? ''),
+  },
+}));
+
+/** One tutorial by slug, or undefined. */
+export function findTutorial(slug: string): Tutorial | undefined {
+  return TUTORIALS.find((t) => t.slug === slug);
+}

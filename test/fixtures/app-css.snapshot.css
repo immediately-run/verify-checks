@@ -1,0 +1,224 @@
+/* Frozen fixture — snapshotted 2026-09-04 from landing-page origin/main (src/App.css).
+   R3-532/R3-533 rewrite this file; a fixture from a stale checkout would freeze
+   selectors that no longer exist. Do not regenerate casually: see the roadmap item. */
+/* The site shell and the home page — layout + components, token-driven (see
+   index.css). The home sections, in order: hero · run · publish · remix ·
+   directory teaser · what's new · closing CTA · footer. */
+
+.wrap{max-width:1280px;margin:0 auto;padding:0 32px}
+.grad-text{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.desk-only{display:inline-flex}
+
+.site-main{display:block;padding-bottom:80px;min-height:60vh}
+.home-fade{animation:ir-fade .2s ease}
+
+/* Route-level section-failed card (SectionErrorBoundary) */
+.section-error{margin:60px auto;max-width:560px;text-align:center;
+  border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--panel);padding:48px 40px;
+  animation:ir-fade .2s ease}
+.section-error__title{font:800 26px var(--disp);letter-spacing:-.02em;color:var(--ink)}
+.section-error__body{margin:10px 0 22px;font:400 15px/1.5 var(--sans);color:var(--ink-2)}
+.section-error__actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
+.section-error__btn{display:inline-flex;align-items:center;justify-content:center;
+  font:600 14px var(--sans);padding:10px 20px;border-radius:var(--r-pill);cursor:pointer;text-decoration:none;
+  border:1px solid var(--line-2);background:var(--panel);color:var(--ink);
+  transition:border-color .14s,box-shadow .14s}
+.section-error__btn:hover{border-color:var(--accent-2)}
+.section-error__btn--primary{border-color:transparent;background:var(--grad-btn);color:#fff}
+.section-error__btn--primary:hover{box-shadow:var(--glow)}
+
+/* shared pills ------------------------------------------------------------- */
+.btn{display:inline-flex;align-items:center;gap:8px;background:var(--grad-btn);color:#fff;
+  font:600 16px var(--sans);padding:14px 24px;border-radius:var(--r-pill);
+  text-decoration:none;border:0;cursor:pointer;transition:box-shadow .14s,filter .14s}
+.btn:hover{box-shadow:var(--glow);filter:brightness(1.05)}
+.btn-ghost{display:inline-flex;align-items:center;gap:8px;background:var(--panel);
+  border:1px solid var(--line-2);color:var(--ink);font:600 16px var(--sans);
+  padding:14px 24px;border-radius:var(--r-pill);text-decoration:none;transition:border-color .14s}
+.btn-ghost:hover{border-color:var(--accent-2)}
+
+/* mono "/slug" tag --------------------------------------------------------- */
+.tag{display:inline-block;font:400 13px var(--mono);letter-spacing:.04em;
+  background:color-mix(in srgb,var(--accent-2) 16%,transparent);color:var(--accent-3);
+  border:1px solid var(--line-2);padding:5px 12px;border-radius:var(--r-pill)}
+
+/* ============================ NAV ========================================= */
+nav.nav{position:sticky;top:0;z-index:80;backdrop-filter:blur(14px);
+  background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
+.nav-inner{max-width:1280px;margin:0 auto;display:flex;align-items:center;gap:20px;padding:14px 32px}
+.logo{display:flex;align-items:center;gap:9px;font:800 23px/1 var(--disp);letter-spacing:-.03em;color:var(--ink)}
+.logo-mark{width:27px;height:27px;border-radius:24%;display:block;box-shadow:0 2px 10px rgba(150,110,240,.30)}
+.nav-links{display:flex;gap:3px;margin-left:8px}
+.nav-link{font:600 14.5px var(--sans);padding:8px 13px;border-radius:var(--r-pill);
+  color:var(--ink-2);transition:color .14s,background .14s}
+.nav-link:hover{color:var(--ink);background:var(--panel-2)}
+.nav-link--active{color:var(--ink);background:color-mix(in srgb,var(--accent-2) 14%,transparent)}
+.nav-right{margin-left:auto;display:flex;gap:9px;align-items:center}
+.icon-btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line-2);
+  background:var(--panel);color:var(--ink-2);border-radius:var(--r-pill);cursor:pointer;
+  font:400 13px var(--sans);transition:color .14s,border-color .14s}
+.icon-btn:hover{color:var(--ink);border-color:var(--accent-2)}
+.theme-btn{padding:7px 12px;font-weight:600}
+.theme-btn .ic{font-size:14px;line-height:1}
+.kbd{font:400 11px var(--mono);background:var(--bg);border:1px solid var(--line);
+  border-radius:var(--r-xs);padding:2px 6px;color:var(--ink-3)}
+.burger{display:none;align-items:center;justify-content:center;width:40px;height:40px;
+  border:1px solid var(--line-2);background:var(--panel);color:var(--ink);
+  border-radius:var(--r-pill);cursor:pointer;font-size:18px}
+
+/* mobile nav sheet */
+.nav-sheet{position:fixed;inset:0;z-index:150;background:color-mix(in srgb,var(--bg) 94%,transparent);
+  backdrop-filter:blur(10px);display:flex;flex-direction:column;padding:16px 22px 26px;animation:ir-fade .15s ease}
+.nav-sheet-top{display:flex;align-items:center;justify-content:space-between}
+.nav-sheet-top span{font:800 21px var(--disp);letter-spacing:-.03em}
+.sheet-close{width:44px;height:44px;border:1px solid var(--line-2);background:var(--panel);
+  color:var(--ink);border-radius:var(--r-pill);cursor:pointer;font-size:22px}
+.nav-sheet-links{display:flex;flex-direction:column;margin-top:26px}
+.nav-sheet-link{font:800 34px var(--disp);letter-spacing:-.03em;color:var(--ink);
+  padding:15px 2px;border-bottom:1px solid var(--line)}
+.nav-sheet .btn{margin-top:auto;justify-content:center;padding:18px;font-size:17px}
+
+/* ============================ HERO ======================================== */
+.hero{padding:52px 0 6px}
+.hero-grid{display:grid;grid-template-columns:1.12fr .88fr;gap:46px;align-items:center}
+.eyebrow{display:inline-block;font:400 12px var(--mono);letter-spacing:.05em;color:var(--accent-3);
+  background:color-mix(in srgb,var(--accent-2) 16%,transparent);border:1px solid var(--line-2);
+  border-radius:var(--r-pill);padding:5px 12px}
+.hero h1{font:800 clamp(54px,9vw,124px)/.85 var(--disp);letter-spacing:-.04em;margin:20px 0 0}
+.deck{font:500 clamp(18px,2vw,24px)/1.34 var(--sans);color:var(--ink);max-width:32ch;margin:24px 0 0}
+.hero-ctas{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
+.proof{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px;font:400 12.5px var(--mono);color:var(--ink-3)}
+
+/* ============================ SECTIONS ==================================== */
+.section{margin:74px 0 0}
+.sec-head{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:26px}
+.sec-head h2{font:800 clamp(30px,4.5vw,52px)/.95 var(--disp);letter-spacing:-.03em;color:var(--ink)}
+.sec-head .more{margin-left:auto;font:600 14.5px var(--sans);color:var(--ink-2);transition:color .14s}
+.sec-head .more:hover{color:var(--accent-3)}
+.run-cue{width:100%;max-width:72ch;font:400 13px/1.75 var(--mono);color:var(--ink-2)}
+
+.key{color:var(--ink);font-weight:600}
+
+/* capability cards (Run section) */
+.cap-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);margin-top:34px;border-top:1px solid var(--line)}
+.cap{background:var(--panel);padding:26px 30px}
+.cap .k{font:400 12px var(--mono);color:var(--accent-3)}
+.cap .t{font:600 18px var(--disp);letter-spacing:-.01em;color:var(--ink);margin:9px 0 6px}
+.cap p{font:400 14px/1.5 var(--sans);color:var(--ink-2)}
+
+/* showcase teaser */
+.show-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.app-card{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-lg);
+  background:var(--panel);overflow:hidden;transition:transform .14s,box-shadow .14s,border-color .14s}
+.app-card:hover{transform:translate(-3px,-3px);box-shadow:var(--shadow-card);border-color:var(--line-2)}
+.app-pic{position:relative;min-height:104px;flex:1;
+  background:repeating-linear-gradient(45deg,transparent 0 12px,color-mix(in srgb,var(--ink) 5%,transparent) 12px 13px)}
+.app-pic .cat{position:absolute;left:11px;bottom:10px;font:400 10.5px var(--mono);color:var(--ink-2);
+  background:var(--bg);border:1px solid var(--line-2);border-radius:var(--r-sm);padding:3px 8px}
+.app-foot{padding:14px 15px;border-top:1px solid var(--line)}
+.app-foot h3{font:800 19px/1 var(--disp);letter-spacing:-.02em;color:var(--ink)}
+.app-foot p{font:400 13px/1.45 var(--sans);color:var(--ink-2);margin-top:9px}
+.app-actions{display:flex;gap:7px;margin-top:13px}
+.app-actions a{flex:1;text-align:center;font:600 13px var(--sans);padding:8px;border-radius:var(--r-pill)}
+.app-actions .open{background:var(--grad-btn);color:#fff}
+.app-actions .fork{background:transparent;border:1px solid var(--line-2);color:var(--ink);transition:border-color .14s}
+.app-actions .fork:hover{border-color:var(--accent-2)}
+
+/* provenance chip */
+.prov{display:inline-block;margin-top:7px;font:400 10.5px var(--mono);border-radius:var(--r-pill);padding:2px 9px}
+.prov.official{color:var(--accent-3);background:color-mix(in srgb,var(--accent-2) 16%,transparent);border:1px solid var(--line-2)}
+.prov.github{color:var(--ink-2);background:transparent;border:1px solid var(--line-2)}
+
+/* what's new teaser */
+.news-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap;border:1px solid var(--line);
+  border-radius:var(--r-lg);background:var(--panel);padding:18px 24px;transition:border-color .14s,background .14s}
+.news-row:hover{border-color:var(--accent-2);background:var(--panel-2)}
+.news-row .ntag{font:400 12px var(--mono);letter-spacing:.04em;color:var(--accent-3)}
+.news-row .badge{font:700 11px var(--mono);text-transform:uppercase;border-radius:var(--r-pill);padding:3px 11px}
+.badge.feat{background:var(--grad-btn);color:#fff}
+.badge.rel{background:color-mix(in srgb,var(--accent-2) 18%,transparent);color:var(--accent-3);border:1px solid var(--line-2)}
+.badge.note{background:color-mix(in srgb,var(--accent-2) 14%,transparent);color:var(--accent-3);border:1px solid var(--line-2)}
+.news-row .news-msg{font:500 16px var(--sans);color:var(--ink)}
+.news-row .news-date{margin-left:auto;font:400 12px var(--mono);color:var(--ink-2)}
+
+/* closing CTA band */
+.closing{margin-top:80px;text-align:center;padding:60px 20px;border:1px solid var(--line);border-radius:var(--r-xl);background:var(--panel)}
+.closing h2{font:800 clamp(36px,6vw,76px)/.9 var(--disp);letter-spacing:-.04em}
+.closing p{font:500 clamp(17px,1.8vw,20px) var(--sans);color:var(--ink-2);margin:16px auto 0;max-width:44ch}
+.closing .hero-ctas{justify-content:center;margin-top:28px}
+
+/* ============================ FOOTER ====================================== */
+footer.foot{border-top:1px solid var(--line);margin-top:80px}
+.foot-inner{max-width:1280px;margin:0 auto;padding:52px 32px 44px}
+.foot-grid{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:30px}
+.foot-signoff{font:800 clamp(52px,8vw,96px)/.82 var(--disp);letter-spacing:-.04em}
+.foot-col .h{font:700 12px var(--mono);letter-spacing:.06em;color:var(--ink-3);text-transform:uppercase;margin-bottom:14px}
+.foot-col .links{display:flex;flex-direction:column;gap:9px;font:400 14.5px var(--sans);color:var(--ink-2)}
+.foot-col .links a:hover{color:var(--ink)}
+.foot-bottom{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;align-items:flex-end;
+  margin-top:38px;padding-top:22px;border-top:1px solid var(--line)}
+.foot-meta{font:400 12px var(--mono);color:var(--ink-3);line-height:1.8}
+.foot-fork{font:400 12.5px var(--mono);color:var(--ink-2);transition:color .14s}
+.foot-fork:hover{color:var(--accent-3)}
+
+/* ============================ RESPONSIVE ================================== */
+@media(max-width:900px){
+  .desk-only{display:none!important}
+  .nav-links{display:none}
+  .burger{display:inline-flex}
+  .hero-grid{grid-template-columns:1fr}
+  .cap-grid{grid-template-columns:1fr}
+  .show-grid{grid-template-columns:1fr 1fr}
+  .foot-grid{grid-template-columns:1fr 1fr}
+  .hero-ctas .btn,.hero-ctas .btn-ghost{flex:1;justify-content:center}
+  .news-row .news-date{margin-left:0}
+}
+@media(max-width:560px){
+  .show-grid{grid-template-columns:1fr}
+}
+
+/* ── R3-513: the door, the new nav cluster, the mobile sheet ────────────── */
+.door{display:inline-flex;align-items:center;justify-content:center;min-height:38px;
+  padding:8px 16px;border:1px solid var(--line-2);border-radius:var(--r-pill);
+  color:var(--ink);font:600 14px var(--sans);text-decoration:none;transition:border-color .14s}
+.door:hover{border-color:var(--accent-2)}
+.nav-omnibox{display:inline-flex}
+.nav-make{color:var(--ink)}
+.nav-door{display:inline-flex}
+.nav-search-btn{display:none;padding:8px 10px}
+.nav-sheet-omnibox{padding:10px 14px;border-bottom:1px solid var(--line)}
+.nav-sheet-door{padding:6px 14px}
+.nav-sheet-door .door{width:100%;min-height:44px;justify-content:center}
+.nav-sheet-theme{display:block;width:100%;min-height:44px;text-align:left;
+  border:0;background:transparent;color:var(--ink-2);font:400 15px var(--sans);
+  padding:10px 14px;cursor:pointer}
+.nav-sheet-link{min-height:44px;display:flex;align-items:center}
+@media(max-width:900px){
+  .nav-omnibox,.nav-make{display:none}
+  .nav-search-btn{display:inline-flex}
+  /* The door is a top-bar control on mobile too, at a 44px tap target. */
+  .nav-door .door{min-height:44px;padding:10px 16px}
+}
+
+/* ── R3-514: the rebuilt front door ─────────────────────────────────────── */
+.hero-doors{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+.hero-door{min-height:44px}
+.hero-still{max-width:380px;justify-self:end;align-self:center}
+.hero-still svg{width:100%;height:auto;display:block}
+.publish-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:22px}
+.publish-cta{margin-top:10px;align-self:flex-start;cursor:pointer;font:600 15px var(--sans)}
+.publish-install{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:24px;
+  padding:16px 18px;border:1px dashed var(--line-2);border-radius:var(--r-md)}
+.publish-install-label{font:700 12px var(--mono);letter-spacing:.12em;color:var(--accent-3)}
+.publish-install-copy{flex:1 1 320px;margin:0;color:var(--ink-2);font-size:14.5px}
+.publish-closing{margin-top:18px;color:var(--ink-2);font-size:14.5px}
+.publish-closing a{color:var(--ink)}
+.remix-still{max-width:460px;margin-top:20px}
+.remix-still svg{width:100%;height:auto;display:block}
+.closing-run{cursor:pointer}
+.closing-fork{margin-top:16px;font:400 13px var(--mono)}
+.closing-fork a{color:var(--ink-3)}
+@media(max-width:900px){
+  .publish-cards{grid-template-columns:1fr}
+  .hero-still,.remix-still{display:none}
+}

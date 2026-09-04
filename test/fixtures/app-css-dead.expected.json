@@ -1,0 +1,4 @@
+{
+  "comment": "findDeadSelectors over app-css.snapshot.css vs app-css-usage.snapshot.txt, measured 2026-09-04 from landing-page origin/main (the ~40 dead selectors of 2026-09-02 were since deleted)",
+  "dead": []
+}
