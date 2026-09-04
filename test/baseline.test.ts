@@ -80,6 +80,15 @@ describe('untestedFiles', () => {
     expect(untested).toEqual([])
     expect(declared).toEqual([{ file: 'src/lib/foo.ts', reason: 'drives the live host only' }])
   })
+
+  it('a test file under the logic paths is the supply, never a file that owes a test', () => {
+    const { untested } = untestedFiles({
+      changed: ['src/lib/routes.test.ts', 'scripts/check-x.test.mjs', 'src/lib/foo.ts'],
+      tests: [],
+      logicPaths,
+    })
+    expect(untested).toEqual(['src/lib/foo.ts'])
+  })
 })
 
 // The git-reading path, exercised by the real producer: commits on a branch
