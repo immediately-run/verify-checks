@@ -23,7 +23,8 @@
     "src"
   ],
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:publish-version": "node scripts/check-publish-version.mjs --self-test && node scripts/check-publish-version.mjs"
   },
   "dependencies": {
     "fast-glob": "3.3.3",

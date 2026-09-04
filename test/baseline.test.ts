@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { cloneFingerprints, commitTrailers, changedSince, knipFingerprints, runJscpd } from '../src/producers.mjs'
+import { cloneFragments, commitTrailers, changedSince, knipFingerprints, runJscpd, runKnip } from '../src/producers.mjs'
 import { diffAgainstBaseline, fingerprint, readBaseline } from '../src/baseline.mjs'
 import { untestedFiles } from '../src/check-untested.mjs'
 
@@ -38,7 +38,7 @@ describe('runJscpd (real producer)', () => {
       patterns: ['test/fixtures/clones'],
       cwd: REPO_ROOT,
     })
-    const fragments = cloneFingerprints(report)
+    const fragments = cloneFragments(report)
     expect(fragments.length).toBeGreaterThan(0)
     expect(fragments.some((fragment) => fragment.includes('formatTileLabel'))).toBe(true)
 
@@ -82,10 +82,11 @@ describe('untestedFiles', () => {
   })
 })
 
-// The git-reading path, exercised by the real producer: a temporary repo with
-// two commits, the second carrying an Untested trailer.
+// The git-reading path, exercised by the real producer: commits on a branch
+// off main — the PR shape the check consumes — including a DELETED file, which
+// must not be demanded a sibling test.
 describe('changedSince + commitTrailers (real git)', () => {
-  it('reads the merge-base diff and the trailer bodies', () => {
+  it('reads the merge-base diff (creations, edits, deletions) and the trailer bodies', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vc-git-'))
     const git = (args: string[]) =>
       execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
@@ -93,21 +94,42 @@ describe('changedSince + commitTrailers (real git)', () => {
       git(['init', '-b', 'main'])
       git(['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'])
       // work on a branch off main, exactly the PR shape the check consumes:
-      // merge-base(main, HEAD) is the first commit, so the diff is the second
+      // merge-base(main, HEAD) is the first commit, so the diff is everything since
       git(['checkout', '-b', 'feature'])
       writeFileSync(join(dir, 'lib-logic-file.ts'), 'export const x = 1\n')
+      writeFileSync(join(dir, 'lib-gone-file.ts'), 'export const y = 2\n')
       git(['add', '.'])
       git([
         '-c', 'user.email=t@t', '-c', 'user.name=t',
         'commit', '-m', 'add logic\n\nUntested: lib-logic-file.ts -- no runner in this fixture',
       ])
-      expect(changedSince('main', dir)).toContain('lib-logic-file.ts')
+      writeFileSync(join(dir, 'lib-logic-file.ts'), 'export const x = 2\n')
+      execFileSync('git', ['rm', '-q', 'lib-gone-file.ts'], { cwd: dir })
+      git([
+        '-c', 'user.email=t@t', '-c', 'user.name=t',
+        'commit', '-q', '-m', 'drop a logic file (its test leaves with it)',
+      ])
+      const changed = changedSince('main', dir)
+      expect(changed).toContain('lib-logic-file.ts')
+      // the deletion is not listed: a deleted file owes nobody a test
+      expect(changed).not.toContain('lib-gone-file.ts')
       expect(commitTrailers('main', dir)).toEqual([
         { file: 'lib-logic-file.ts', reason: 'no runner in this fixture' },
       ])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+// knip's REAL output over this repo feeds the parser, so a reporter shape
+// change cannot pass a hand-typed fixture again.
+describe('runKnip + knipFingerprints (real producer)', () => {
+  it('reports this repo\'s unimported fixtures as unused files', { timeout: 180_000 }, () => {
+    const report = runKnip({ cwd: REPO_ROOT })
+    const fingerprints = knipFingerprints(report)
+    expect(fingerprints).toContain('test/fixtures/clones/a.ts:(file)')
+    expect(fingerprints).toContain('test/fixtures/clones/b.ts:(file)')
   })
 })
 

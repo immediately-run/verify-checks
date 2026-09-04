@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import fastGlob from 'fast-glob'
 import { ratchet } from './baseline.mjs'
 
@@ -19,9 +20,11 @@ export async function checkDeadCss({
   }
   const cssFiles = fastGlob.sync(cssGlobs, { cwd }).map((path) => ({
     path,
-    text: readFileSync(path, 'utf8'),
+    text: readFileSync(resolve(cwd, path), 'utf8'),
   }))
-  const sourceTexts = fastGlob.sync(sourceGlobs, { cwd }).map((path) => readFileSync(path, 'utf8'))
+  const sourceTexts = fastGlob
+    .sync(sourceGlobs, { cwd })
+    .map((path) => readFileSync(resolve(cwd, path), 'utf8'))
   const findings = findDeadSelectors({ cssFiles, sourceTexts })
   await ratchet({ check: 'dead-css', findings, baselinePath, cwd })
 }
@@ -37,6 +40,8 @@ export function stripCssNoise(css) {
   let out = css.replace(/\/\*[\s\S]*?\*\//g, '')
   // drop string literals so a "}" inside content:"..." cannot split blocks
   out = out.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'(?:[^'\\]|\\.)*'/g, "''")
+  // unquoted url() bodies (data URIs) can carry braces; drop them wholesale
+  out = out.replace(/url\([^)]*\)/gi, 'url()')
   // drop @keyframes blocks entirely (balanced braces), so their from/to/percent
   // inner blocks are never mistaken for selectors
   let previous
@@ -47,14 +52,35 @@ export function stripCssNoise(css) {
   return out
 }
 
+// Structural walk: split the stylesheet at every brace, tracking depth, so a
+// selector's visibility does not depend on a `}` or line-start anchor — the
+// first rule inside an @media block must be extracted exactly like a
+// top-level one. Each block carries the prelude text that preceded its `{`.
+function walkBlocks(cleaned) {
+  const blocks = []
+  let depth = 0
+  let current = ''
+  for (const ch of cleaned) {
+    if (ch === '{') {
+      blocks.push({ prelude: current.trim(), depth })
+      current = ''
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  return blocks
+}
+
 export function extractSelectors(cssText, { filePath = 'inline.css' } = {}) {
   const cleaned = stripCssNoise(cssText)
   const selectors = []
-  const blockPattern = /(^|\})\s*([^{}@][^{}]*)\{/g
-  let match
-  while ((match = blockPattern.exec(cleaned)) !== null) {
-    const selectorList = match[2]
-    for (const compound of selectorList.split(',')) {
+  for (const { prelude } of walkBlocks(cleaned)) {
+    if (prelude === '' || prelude.startsWith('@')) continue
+    for (const compound of prelude.split(',')) {
       const trimmed = compound.trim()
       if (trimmed === '' || trimmed.startsWith('@')) continue
       // pseudo-classes, pseudo-elements and attribute selectors are ignored:

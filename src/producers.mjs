@@ -7,8 +7,9 @@ function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 }
 
-function toolMissing(err, tool) {
-  return err.code === 'ENOENT' || /not found|Could not resolve|not installed/i.test(`${err.message} ${err.stderr ?? ''}`)
+function toolMissing(err) {
+  const text = `${err.message} ${err.stderr ?? ''}`
+  return /not found|could not resolve|not installed|canceled due to missing packages|no yes option/i.test(text)
 }
 
 // jscpd writes its JSON reporter output as jscpd-report.json under the
@@ -38,7 +39,7 @@ function fileReadable(path) {
   }
 }
 
-export function runJscpd({ patterns, minLines = 6, minTokens = 50, cwd = process.cwd() }) {
+export function runJscpd({ patterns, ignore = [], minLines = 6, minTokens = 50, cwd = process.cwd() }) {
   const outDir = mkdtempSync(join(tmpdir(), 'verify-checks-jscpd-'))
   try {
     const args = [
@@ -55,10 +56,11 @@ export function runJscpd({ patterns, minLines = 6, minTokens = 50, cwd = process
       String(minTokens),
       '--silent',
     ]
+    if (ignore.length > 0) args.push('--ignore', ignore.join(','))
     try {
       run('npx', args, cwd)
     } catch (err) {
-      if (toolMissing(err, 'jscpd')) {
+      if (toolMissing(err)) {
         throw new Error('jscpd is required but not installed. It is a dependency of @immediately-run/verify-checks — run: npm install')
       }
       throw new Error(`jscpd failed: ${err.message}\n${err.stderr ?? ''}`)
@@ -69,7 +71,7 @@ export function runJscpd({ patterns, minLines = 6, minTokens = 50, cwd = process
   }
 }
 
-export function cloneFingerprints(report) {
+export function cloneFragments(report) {
   return (report.duplicates ?? []).map((dup) => dup.fragment)
 }
 
@@ -84,7 +86,7 @@ export function runKnip({ cwd = process.cwd() }) {
   } catch (err) {
     if (typeof err.stdout === 'string' && err.stdout.trim().startsWith('{')) {
       raw = err.stdout
-    } else if (toolMissing(err, 'knip')) {
+    } else if (toolMissing(err)) {
       throw new Error('knip is required but not installed. It is a dependency of @immediately-run/verify-checks — run: npm install')
     } else {
       throw new Error(`knip failed: ${err.message}\n${err.stderr ?? ''}`)
@@ -121,7 +123,10 @@ export function mergeBase(base, cwd = process.cwd()) {
 
 export function changedSince(base, cwd = process.cwd()) {
   const mb = mergeBase(base, cwd)
-  return run('git', ['diff', '--name-only', `${mb}..HEAD`], cwd)
+  // ACMRT excludes D: a deleted logic file must not be demanded a sibling
+  // test — complete deletion (logic AND test gone together) is the shape the
+  // repos' review asks for, and listing deleted paths would push the opposite.
+  return run('git', ['diff', '--name-only', '--diff-filter=ACMRT', `${mb}..HEAD`], cwd)
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)

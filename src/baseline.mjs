@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
 export function fingerprint(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16)
@@ -42,8 +42,9 @@ export async function ratchet({
   argv = process.argv.slice(2),
 }) {
   const unique = [...new Set(findings)]
+  const resolvedBaseline = resolve(cwd, baselinePath)
   if (argv.includes('--write-baseline')) {
-    if (existsSync(baselinePath)) {
+    if (existsSync(resolvedBaseline)) {
       console.error(
         `${check}: refusing to overwrite ${baselinePath} — a baseline file already exists there. ` +
           'Baselines only shrink: fix the findings, or delete the stale entries by hand and let the check confirm.',
@@ -51,11 +52,11 @@ export async function ratchet({
       process.exitCode = 1
       return
     }
-    writeBaselineFile(baselinePath, unique)
+    writeBaselineFile(resolvedBaseline, unique)
     console.log(`${check}: wrote ${unique.length} fingerprint(s) to ${baselinePath}`)
     return
   }
-  const baseline = readBaseline(baselinePath)
+  const baseline = readBaseline(resolvedBaseline)
   if (baseline === null) {
     console.error(
       `${check}: no baseline at ${baselinePath} (cwd ${cwd}). ` +

@@ -61,6 +61,25 @@ input[type="text"] { color: black; }
     expect(all).not.toContain('fixture.css:commented')
   })
 
+  it('the first rule inside @media/@supports is extracted, not just later ones', () => {
+    const media = '@media (max-width: 900px) { .mq-only { color: red; } .mq-second { color: blue; } }'
+    expect(extractSelectors(media, { filePath: 'm.css' }).sort()).toEqual([
+      'm.css:.mq-only',
+      'm.css:.mq-second',
+    ])
+    const nested = '.top { a: 1 } @supports (display: grid) { .sup { b: 2 } @media print { .pr { c: 3 } } }'
+    expect(extractSelectors(nested, { filePath: 'n.css' }).sort()).toEqual([
+      'n.css:.pr',
+      'n.css:.sup',
+      'n.css:.top',
+    ])
+  })
+
+  it('an unquoted url() body with braces cannot split blocks', () => {
+    const tricky = `.icon { background: url(data:image/svg+xml;{,a}); }\n.after-url { color: red; }`
+    expect(extractSelectors(tricky, { filePath: 'u.css' })).toEqual(['u.css:.icon', 'u.css:.after-url'])
+  })
+
   it('a string containing a brace does not split blocks', () => {
     const tricky = `.with-content::after { content: "}"; }\n.after-str { color: red; }`
     const all = extractSelectors(tricky, { filePath: 't.css' })

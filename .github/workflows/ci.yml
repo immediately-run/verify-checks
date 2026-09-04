@@ -5,9 +5,12 @@ name: ci
 # five core repos consume this package as a pinned github: dependency until the
 # npm trusted-publishing link exists, then move to pinned npm versions.
 # NOTE: npm trusted publishing must be configured for this package on
-# npmjs.com before the first publish succeeds; until then this job's test
-# still runs, only the publish step is inert (it skips if the version is
-# already published and otherwise needs the OIDC trust link).
+# npmjs.com before the FIRST publish can succeed (an unpublished package name
+# cannot be published by OIDC alone). Until the operator links it, the publish
+# step detects the E404 and skips loudly; once the package exists on npm the
+# step is a real gate and a red run means a stale or mislinked publish.
+# check:publish-version (R3-327) moves the "shipped bytes changed ⇒ version
+# bumped" question to PR time.
 on:
   push:
     branches: [main]
@@ -28,6 +31,10 @@ jobs:
           package-manager-cache: false # never cache in release builds
       # Trusted publishing requires npm >= 11.5.1
       - run: npm install -g npm@latest
+      # R3-327 — shipped bytes changed ⇒ the version was bumped in this PR
+      - name: Shipped bytes changed ⇒ the version was bumped in this PR
+        if: github.event_name == 'pull_request'
+        run: npm run check:publish-version
       - run: npm ci
       - run: npm test
       - name: Publish to npm via trusted publishing (skip if version already published)
@@ -39,6 +46,10 @@ jobs:
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
+          if ! npm view "$PKG_NAME" version >/dev/null 2>&1; then
+            echo "::notice::$PKG_NAME does not exist on npm yet — trusted publishing is not linked (operator step). Skipping the publish; everything else ran."
+            exit 0
+          fi
           if npm view "$PKG_NAME@$PKG_VER" version >/dev/null 2>&1; then
             echo "::notice::$PKG_NAME@$PKG_VER already published — skipping."
             exit 0

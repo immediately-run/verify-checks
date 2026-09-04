@@ -1,10 +1,11 @@
 import { fingerprint, ratchet } from './baseline.mjs'
-import { cloneFingerprints, runJscpd } from './producers.mjs'
+import { cloneFragments, runJscpd } from './producers.mjs'
 
-export { cloneFingerprints, runJscpd }
+export { cloneFragments, runJscpd }
 
 export async function checkClones({
   patterns,
+  ignore = [],
   minLines = 6,
   minTokens = 50,
   baselinePath,
@@ -16,7 +17,7 @@ export async function checkClones({
   if (!baselinePath) {
     throw new Error('check-clones: baselinePath is required (e.g. "verify-baselines/clones.json")')
   }
-  const report = runJscpd({ patterns, minLines, minTokens, cwd })
-  const findings = (report.duplicates ?? []).map((dup) => fingerprint(dup.fragment))
+  const report = runJscpd({ patterns, ignore, minLines, minTokens, cwd })
+  const findings = cloneFragments(report).map((fragment) => fingerprint(fragment))
   await ratchet({ check: 'clones', findings, baselinePath, cwd })
 }
