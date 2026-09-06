@@ -1,27 +1,26 @@
 name: ci
 
 # Test on every PR + push; publish to npm on push to main via npm trusted
-# publishing (OIDC), mirroring platform-constants / the SDK release job. The
-# five core repos consume this package as a pinned github: dependency until the
-# npm trusted-publishing link exists, then move to pinned npm versions.
-# NOTE: npm trusted publishing must be configured for this package on
-# npmjs.com before the FIRST publish can succeed (an unpublished package name
-# cannot be published by OIDC alone). Until the operator links it, the publish
-# step detects the E404 and skips loudly; once the package exists on npm the
-# step is a real gate and a red run means a stale or mislinked publish.
+# publishing (OIDC). Mirrors prettier-config's split
+# (immediately-run/prettier-config/.github/workflows/ci.yml), which R3-527's
+# Architecture names as the model: the release half is a separate job behind
+# `environment: production`, because R-TA-1 (TESTING_AUTOMATION_SPEC §6) makes
+# publishing a public artifact DECISION-gated — an npm version is irreversible
+# and consumer-facing. Keeping it in one job would gate every PR run behind an
+# approval too.
+#
 # check:publish-version (R3-327) moves the "shipped bytes changed ⇒ version
-# bumped" question to PR time.
+# bumped" question to PR time, where the release job never runs.
 on:
   push:
     branches: [main]
   pull_request:
 
 jobs:
-  test-publish:
+  test:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm trusted publishing (OIDC)
     steps:
       - uses: actions/checkout@v6
         with:
@@ -32,31 +31,67 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-          package-manager-cache: false # never cache in release builds
-      # Trusted publishing requires npm >= 11.5.1
-      - run: npm install -g npm@latest
+          package-manager-cache: false
       # R3-327 — shipped bytes changed ⇒ the version was bumped in this PR
       - name: Shipped bytes changed ⇒ the version was bumped in this PR
         if: github.event_name == 'pull_request'
         run: npm run check:publish-version
       - run: npm ci
       - run: npm test
-      - name: Publish to npm via trusted publishing (skip if version already published)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+  release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC)
+      actions: read # read THIS run's approval history (the assertion below)
+    steps:
+      # Fail-closed authority gate (ways_of_working §2). GitHub auto-creates an
+      # UNPROTECTED environment when a workflow names one that does not exist, so
+      # declaring `environment: production` is not by itself proof of a human gate.
+      # Refuse to publish rather than publish an irreversible version unattended.
+      - name: Assert this run cleared the `production` approval gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APPROVALS=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/approvals")
+          COUNT=$(printf '%s' "$APPROVALS" | jq '[.[] | select(.state == "approved") | select(any(.environments[]?; .name == "production"))] | length')
+          if [ "${COUNT:-0}" -lt 1 ]; then
+            echo "::error::No human approval recorded for environment 'production' on this run. Configure Settings → Environments → production → Required reviewers, then re-run. Refusing to publish an irreversible public version unattended (TESTING_AUTOMATION_SPEC R-TA-1)."
+            exit 1
+          fi
+          printf '%s' "$APPROVALS" | jq -r '.[] | select(.state == "approved") | "approved by \(.user.login): \(.comment // "")"'
+
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # never cache in release builds
+      # Trusted publishing requires npm >= 11.5.1. Pinned to a major line rather than
+      # `npm@latest`, so a release cannot float across a major unattended: npm@12.0.0
+      # shipped without libnpmpublish's `sigstore` dependency and every
+      # `npm publish --provenance` threw `Cannot find module 'sigstore'` (npm/cli#9722),
+      # which is what broke the SDK's 0.29.0 and the transpiler's 0.5.0. That one is
+      # fixed in npm@12.0.1, so this pin is hygiene, not a workaround — 11.x is the line
+      # the org's other publishes are proven on.
+      - run: npm install -g npm@11
+
+      # Only publish when package.json's version is new. The deliberate release act is
+      # therefore the VERSION BUMP landing on main, not the merge itself (R-TA-1).
+      - name: Publish if the version is new
         env:
           # setup-node's registry-url writes an .npmrc bound to NODE_AUTH_TOKEN.
           # Clearing it forces OIDC trusted publishing instead of (empty) token auth.
-          NODE_AUTH_TOKEN: ""
+          NODE_AUTH_TOKEN: ''
         run: |
-          PKG_NAME=$(node -p "require('./package.json').name")
-          PKG_VER=$(node -p "require('./package.json').version")
-          if ! npm view "$PKG_NAME" version >/dev/null 2>&1; then
-            echo "::notice::$PKG_NAME does not exist on npm yet — trusted publishing is not linked (operator step). Skipping the publish; everything else ran."
-            exit 0
-          fi
-          if npm view "$PKG_NAME@$PKG_VER" version >/dev/null 2>&1; then
-            echo "::notice::$PKG_NAME@$PKG_VER already published — skipping."
+          PKG=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if npm view "$PKG@$VER" version >/dev/null 2>&1; then
+            echo "$PKG@$VER is already published — nothing to do."
             exit 0
           fi
           npm publish --access public
