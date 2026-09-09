@@ -171,8 +171,17 @@ describe('knipFingerprints', () => {
     ],
   }
 
-  it('baselines unused files as file:(file) and unused exports as file:export', () => {
+  // R3-572 widened this: until then the fingerprinter read `files` and `exports` only, and
+  // this case pinned that as a decision ("dependencies are out of scope"). It was the wrong
+  // decision — an unused dependency is supply-chain surface carried for nothing, and the
+  // narrow read also discarded `types`, so 15 unused exported types passed `verify` in
+  // `immediately-run-backend` with no baseline able to record them. The expectation below is
+  // therefore larger on purpose; `test/producers.test.ts` holds the widened contract against
+  // a real captured report.
+  it('baselines files, exports and dependencies in one fingerprint vocabulary', () => {
     expect(knipFingerprints(recorded).sort()).toEqual([
+      'package.json:jscpd',
+      'src/lib/legacy.ts:jscpd',
       'src/lib/legacy.ts:oldHelper',
       'test/fixtures/clones/a.ts:(file)',
     ])
