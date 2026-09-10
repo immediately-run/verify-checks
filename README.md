@@ -10,7 +10,7 @@ Four checks, one ratchet:
 | check | producer | baseline fingerprint |
 |---|---|---|
 | `check-clones` | jscpd (JSON reporter) | sha256-16 of the clone's `fragment` text |
-| `check-unused` | knip (JSON reporter) | `file:export` string |
+| `check-unused` | knip (JSON reporter) | `file:name` across knip's `files`/`exports`/`types`/`dependencies`; `file:(file)` for `files` |
 | `check-untested` | git (merge-base diff + trailers) | failing file path (not baselined) |
 | `check-dead-css` | selector scan vs source usage | `file:.selector` string |
 

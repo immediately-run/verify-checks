@@ -99,16 +99,62 @@ export function runKnip({ cwd = process.cwd() }) {
   }
 }
 
-// knip 6's JSON reporter emits a flat array of per-file issue objects, each
-// with one key per issue class; `files` and `exports` are the two classes this
-// check baselines (dependencies are out of scope — the repos have their own
-// pin checks). Verified against knip 6.34.0's real output on this repo.
+// The knip issue classes this check baselines.
+//
+// One list, walked once, rather than a loop per class: reading only `files` and `exports`
+// silently discarded the other two classes knip reported — 15 unused exported types and one
+// unused dependency in `immediately-run-backend` alone, none of which any baseline recorded
+// and none of which `verify` could fail on (R3-572). A fifth class should be one array entry,
+// not a fifth loop someone forgets to add.
+//
+// Measured with knip 6.34.0 today: `immediately-run-backend` emits exactly these four, but the
+// repo set as a whole emits more — `site-main` alone reports 123 `unlisted` and 42
+// `duplicates`, and `sdk`, `sandbox` and `landing-page` each report `devDependencies`. So the
+// exclusions below are decisions, not an absence:
+//
+//   * `devDependencies` — a devDependency unused in *source* is routine (a CLI invoked from a
+//     script), so baselining it produces a list nobody trims;
+//   * `unlisted` — fires on these repos' own workspace layout;
+//   * `duplicates`, `cycles` — knip's JSON reporter pushes arrays of symbols for these, not
+//     `{name}` objects (see its `initRow`), so they would need their own rendering rather than
+//     a place in this list. The guard below is what stops that being discovered in a baseline;
+//   * `unresolved`, `binaries`, `enumMembers`, `namespaceMembers`, `catalog`,
+//     `catalogReferences`, `nsExports`, `nsTypes`, `optionalPeerDependencies` — not yet argued
+//     either way, and adding one is a deliberate edit here rather than a silent widening.
+//
+// That is all thirteen `initRow()` emits and this list does not.
+//
+// Exported so a test can assert the membership rather than re-deriving it from the same names.
+export const FINGERPRINTED_CLASSES = ['files', 'exports', 'types', 'dependencies']
+
+// knip 6's JSON reporter emits a flat array of per-file issue objects, each with one key per
+// issue class. Every class here carries a `.name`, `files` included — its name is the file
+// path. `files` is nonetheless rendered `<file>:(file)` because that is the fingerprint the
+// consuming baselines already contain — 59 entries across four of the five repos
+// (landing-page's is empty) — and changing it would orphan every one of them.
 export function knipFingerprints(report) {
   const out = []
   for (const entry of report.issues ?? []) {
     if (!entry || typeof entry.file !== 'string') continue
-    for (const issue of entry.files ?? []) out.push(`${entry.file}:(file)`)
-    for (const issue of entry.exports ?? []) out.push(`${entry.file}:${issue.name}`)
+    for (const cls of FINGERPRINTED_CLASSES) {
+      for (const issue of entry[cls] ?? []) {
+        if (cls === 'files') {
+          out.push(`${entry.file}:(file)`)
+          continue
+        }
+        // Loudly, not `:undefined`. A class whose entries are not `{name}` objects would
+        // otherwise write an unmatched fingerprint into a committed baseline, where it can
+        // never be diffed away — the exact silent-failure shape `ratchet` exists to avoid.
+        if (typeof issue?.name !== 'string') {
+          throw new Error(
+            `knipFingerprints: knip's "${cls}" entry for ${entry.file} has no string .name ` +
+              `(got ${JSON.stringify(issue)}). That class needs its own rendering, not a place ` +
+              `in FINGERPRINTED_CLASSES.`,
+          )
+        }
+        out.push(`${entry.file}:${issue.name}`)
+      }
+    }
   }
   return out
 }
