@@ -1,6 +1,6 @@
 {
   "name": "@immediately-run/verify-checks",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Deterministic quality checks shared by the immediately.run core repos: clones (jscpd), unused exports (knip), untested logic (git merge-base + Untested trailers), dead CSS. Baselines are fingerprint sets that only shrink.",
   "license": "UNLICENSED",
   "repository": {
