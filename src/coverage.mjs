@@ -5,66 +5,85 @@ import { isAbsolute, relative, resolve } from 'node:path'
 // plans/untested-coverage Q3). Two wire formats, both produced by the runners
 // the repos already have:
 //
-//   - lcov (`DA:<line>,<hits>` records; node --test --test-reporter=lcov)
+//   - lcov (`DA:<line>,<hits>` records; node --test --test-reporter=lcov, with
+//     --enable-source-maps so the backend's compiled lib-test run remaps to
+//     src/ coordinates)
 //   - istanbul coverage-final.json (jest --coverageReporters=json; vitest's
-//     json reporter on the v8 provider) — statement/fn/branch locations
-//     flattened to lines
+//     json reporter on the v8 provider)
 //
-// Both answer ONE question: the set of 1-based source lines executed at least
-// once, keyed by repo-relative path. A file absent from the report has no
-// covered lines — that is the #59 discrimination (imported-but-not-executed
-// lines carry hits 0, and an unimported file has no record at all).
+// Both answer, per repo-relative path:
+//   covered    — the 1-based lines executed at least once
+//   executable — the 1-based lines ANY location spans (a comment, blank, or
+//                type-only line is in neither set, which is how istanbul-mode
+//                changed comment lines avoid becoming permanent findings; in
+//                lcov mode node marks those lines covered anyway)
+//
+// A file ABSENT from the report is different from a file with no covered
+// lines: absence means the test run never loaded it, so nothing about it is
+// known — the check treats every changed line of an absent file as uncovered
+// (the backend-#59 discrimination: imported-but-not-executed lines carry hits
+// 0; a never-imported file has no record at all).
 
 function normalizePath(path, cwd) {
   const absolute = isAbsolute(path) ? path : resolve(cwd, path)
   return relative(cwd, absolute)
 }
 
+function record(map, file, cwd) {
+  const key = normalizePath(file, cwd)
+  const entry = map.get(key) ?? { covered: new Set(), executable: new Set() }
+  map.set(key, entry)
+  return entry
+}
+
 // lcov: SF:<file> opens a record, DA:<line>,<hits> fills it, end_of_record closes.
 export function readLcov(text, { cwd = process.cwd() } = {}) {
-  const covered = new Map()
+  const report = new Map()
   let current = null
   for (const rawLine of text.split('\n')) {
     const line = rawLine.trim()
     if (line.startsWith('SF:')) {
-      const key = normalizePath(line.slice(3), cwd)
-      current = covered.get(key) ?? new Set()
-      covered.set(key, current)
+      current = record(report, line.slice(3), cwd)
     } else if (line.startsWith('DA:') && current) {
       const [lineNo, hits] = line.slice(3).split(',').map(Number)
-      if (hits > 0) current.add(lineNo)
+      current.executable.add(lineNo)
+      if (hits > 0) current.covered.add(lineNo)
     } else if (line === 'end_of_record') {
       current = null
     }
   }
-  return covered
+  return report
 }
 
 // istanbul coverage-final.json: { <file>: { statementMap, s, fnMap, f, branchMap, b } }.
-// A location counts when its hit count is > 0; every line it spans is covered.
+// A location is executable by virtue of being mapped; covered when its hit
+// count is > 0. Every line a location spans joins the corresponding set.
 export function readIstanbulCoverage(json, { cwd = process.cwd() } = {}) {
-  const covered = new Map()
+  const report = new Map()
   for (const [file, data] of Object.entries(json)) {
-    const lines = covered.get(file === '' ? file : normalizePath(file, cwd)) ?? new Set()
-    covered.set(normalizePath(file, cwd), lines)
+    const entry = record(report, file, cwd)
     const mark = (loc, hits) => {
-      if (!hits || !loc?.start?.line) return
+      if (!loc?.start?.line) return
       const end = loc.end?.line ?? loc.start.line
-      for (let l = loc.start.line; l <= end; l += 1) lines.add(l)
+      for (let l = loc.start.line; l <= end; l += 1) {
+        entry.executable.add(l)
+        if (hits > 0) entry.covered.add(l)
+      }
     }
     for (const [id, loc] of Object.entries(data.statementMap ?? {})) mark(loc, data.s?.[id])
     for (const [id, fn] of Object.entries(data.fnMap ?? {})) mark(fn.decl ?? fn.loc, data.f?.[id])
     for (const [id, branch] of Object.entries(data.branchMap ?? {})) {
-      for (const loc of branch.locations ?? []) mark(loc, data.b?.[id]?.[branch.locations.indexOf(loc)])
+      ;(branch.locations ?? []).forEach((loc, i) => mark(loc, data.b?.[id]?.[i]))
     }
   }
-  return covered
+  return report
 }
 
 // Format sniffing, never extension guessing: lcov is line-oriented text with
 // SF:/DA: records; istanbul coverage-final.json is a JSON object keyed by path.
 export function readCoverageReport(reportPath, { cwd = process.cwd() } = {}) {
-  const text = readFileSync(resolve(cwd, reportPath), 'utf8')
+  const resolved = resolve(cwd, reportPath)
+  const text = readFileSync(resolved, 'utf8')
   if (text.trim() === '') {
     throw new Error(`coverage report ${reportPath} is empty — the coverage run produced nothing`)
   }

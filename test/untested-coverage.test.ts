@@ -6,10 +6,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { readCoverageReport, readLcov, readIstanbulCoverage } from '../src/coverage.mjs'
 import {
   checkUntestedCoverage,
-  coverageFingerprint,
+  formatBaselineEntry,
+  parseBaselineEntry,
+  staleEntries,
   uncoveredRangesByFile,
+  unexcusedGaps,
 } from '../src/check-untested-coverage.mjs'
-import { changedLineRanges } from '../src/producers.mjs'
+import { changedLineRanges, parseUnifiedDiffRanges } from '../src/producers.mjs'
 
 const REPO_ROOT = new URL('..', import.meta.url).pathname
 
@@ -29,7 +32,8 @@ function gitFixture() {
     git,
     commit,
     write: (file: string, text: string) => {
-      mkdirSync(join(dir, file.split('/').slice(0, -1).join('/')), { recursive: true })
+      const parent = file.split('/').slice(0, -1).join('/')
+      if (parent) mkdirSync(join(dir, parent), { recursive: true })
       writeFileSync(join(dir, file), text)
     },
     addAll: () => git(['add', '.']),
@@ -37,50 +41,53 @@ function gitFixture() {
   }
 }
 
+describe('parseUnifiedDiffRanges (pure)', () => {
+  it('parses hunk headers into per-file half-open ranges and merges adjoining hunks', () => {
+    const diff = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -10,0 +11,2 @@',
+      '@@ -20 +22,0 @@', // pure deletion: nothing
+      '@@ -30 +31 @@',
+      '@@ -31 +32 @@', // adjoins the previous range [31,32) → [31,33)
+      'diff --git a/src/b.ts b/src/b.ts',
+      '--- /dev/null',
+      '+++ b/src/b.ts',
+      '@@ -0,0 +1,5 @@',
+    ].join('\n')
+    const ranges = parseUnifiedDiffRanges(diff)
+    expect(ranges.get('src/a.ts')).toEqual([
+      [11, 13],
+      [31, 33],
+    ])
+    expect(ranges.get('src/b.ts')).toEqual([[1, 6]])
+  })
+
+  it('a deleted file (+++ /dev/null) contributes no ranges', () => {
+    const diff = ['--- a/src/gone.ts', '+++ /dev/null', '@@ -1,3 +0,0 @@'].join('\n')
+    expect([...parseUnifiedDiffRanges(diff).keys()]).toEqual([])
+  })
+})
+
 describe('changedLineRanges (real git)', () => {
-  it('a new file contributes one range over all its lines', () => {
-    const repo = gitFixture()
-    try {
-      repo.write('src/calc.ts', 'export const a = 1\nexport const b = 2\nexport const c = 3\n')
-      repo.addAll()
-      repo.commit('add calc')
-      expect(changedLineRanges('main', 'src/calc.ts', repo.dir)).toEqual([[1, 4]])
-    } finally {
-      repo.cleanup()
-    }
-  })
-
-  it('an edit contributes exactly its hunk, 1-based and half-open', () => {
+  it('hunk precision across two files in one diff: only the edited lines are new-side ranges', () => {
     const repo = gitFixture()
     try {
       repo.write('src/calc.ts', 'l1\nl2\nl3\nl4\nl5\n')
+      repo.write('src/other.ts', 'x1\nx2\n')
       repo.addAll()
-      repo.commit('add calc')
-      repo.write('src/calc.ts', 'l1\nl2\nCHANGED\nl4\nl5\n')
-      repo.addAll()
-      repo.commit('edit line 3')
-      expect(changedLineRanges('main', 'src/calc.ts', repo.dir)).toEqual([[1, 6]])
-      // (the whole file is one branch diff vs the empty root commit — the next
-      // case pins hunk precision against a base that has content)
-    } finally {
-      repo.cleanup()
-    }
-  })
-
-  it('hunk precision: only the edited lines are new-side ranges', () => {
-    const repo = gitFixture()
-    try {
-      repo.write('src/calc.ts', 'l1\nl2\nl3\nl4\nl5\n')
-      repo.addAll()
-      repo.commit('add calc on the branch base')
-      // Re-base the fixture: make this content main's, then edit on a branch.
+      repo.commit('add files')
       repo.git(['checkout', '-q', 'main'])
       repo.git(['merge', '-q', '--ff-only', 'feature'])
       repo.git(['checkout', '-q', '-b', 'feature-2'])
       repo.write('src/calc.ts', 'l1\nl2\nCHANGED\nl4\nl5\n')
+      repo.write('src/other.ts', 'x1\nx2\nx3\n')
       repo.addAll()
-      repo.commit('edit line 3')
-      expect(changedLineRanges('main', 'src/calc.ts', repo.dir)).toEqual([[3, 4]])
+      repo.commit('edit line 3, append one')
+      const ranges = changedLineRanges('main', ['src/calc.ts', 'src/other.ts'], repo.dir)
+      expect(ranges.get('src/calc.ts')).toEqual([[3, 4]])
+      expect(ranges.get('src/other.ts')).toEqual([[3, 4]])
     } finally {
       repo.cleanup()
     }
@@ -98,7 +105,7 @@ describe('changedLineRanges (real git)', () => {
       repo.write('src/calc.ts', 'l1\n')
       repo.addAll()
       repo.commit('delete two lines')
-      expect(changedLineRanges('main', 'src/calc.ts', repo.dir)).toEqual([])
+      expect(changedLineRanges('main', ['src/calc.ts'], repo.dir).get('src/calc.ts') ?? []).toEqual([])
     } finally {
       repo.cleanup()
     }
@@ -109,32 +116,33 @@ describe('readCoverageReport over real frozen reports', () => {
   // lcov: real backend report (see the fixture header). istanbul: a real jest
   // coverage-final.json captured 2026-09-30 from immediately-run-site-main —
   // `jest src/filesystem/mountPath.test.ts --coverage --coverageReporters=json
-  // --collectCoverageFrom=src/filesystem/mountPath.ts` — whose statementMap
-  // carries one unexecuted statement at line 35.
-  it('reads lcov DA records into per-line coverage (real backend report)', () => {
-    const covered = readCoverageReport(join(REPO_ROOT, 'test/fixtures/coverage/node-lcov.snapshot.info'), {
+  // --collectCoverageFrom=src/filesystem/mountPath.ts`.
+  it('reads lcov DA records into covered + executable line sets (real backend report)', () => {
+    const report = readCoverageReport(join(REPO_ROOT, 'test/fixtures/coverage/node-lcov.snapshot.info'), {
       cwd: '/repo',
     })
-    expect([...covered.keys()]).toEqual(['src/spaceQuota.ts'])
-    expect(covered.get('src/spaceQuota.ts')?.has(1)).toBe(true)
-    expect(covered.get('src/spaceQuota.ts')?.size).toBeGreaterThan(80)
+    expect([...report.keys()]).toEqual(['src/spaceQuota.ts'])
+    const entry = report.get('src/spaceQuota.ts')
+    expect(entry?.covered.has(1)).toBe(true)
+    expect(entry?.executable.has(1)).toBe(true)
+    expect(entry?.covered.size).toBeGreaterThan(80)
   })
 
   it('reads istanbul coverage-final.json (real site-main report)', () => {
-    const covered = readCoverageReport(join(REPO_ROOT, 'test/fixtures/coverage/jest-coverage-final.snapshot.json'), {
+    const report = readCoverageReport(join(REPO_ROOT, 'test/fixtures/coverage/jest-coverage-final.snapshot.json'), {
       cwd: '/home/dev/workspaces/playful-otter/immediately-run-site-main',
     })
-    const mountPath = covered.get('src/filesystem/mountPath.ts')
+    const mountPath = report.get('src/filesystem/mountPath.ts')
     expect(mountPath).toBeDefined()
-    expect(mountPath?.has(16)).toBe(true) // the isSafeMountSegment statement, 75 hits
-    expect(mountPath?.size).toBeGreaterThan(20)
+    expect(mountPath?.covered.has(16)).toBe(true) // the isSafeMountSegment statement, 75 hits
+    expect(mountPath?.covered.size).toBeGreaterThan(20)
+    // executable ⊇ covered (equality is possible: this file's one 0-hit
+    // statement shares line 35 with an executed location)
+    expect(mountPath?.executable.size).toBeGreaterThanOrEqual(mountPath?.covered.size ?? 0)
   })
 
-  it('istanbul hits discipline: a 0-hit location is not covered, an overlapping 1-hit location covers its span', () => {
-    // A minimal report object (unit input, not the frozen fixture): the 0-hit
-    // statement at line 5 must not mark it; the executed statement spanning
-    // lines 8-10 must mark all three.
-    const report = {
+  it('istanbul hits discipline: a 0-hit location is executable but not covered', () => {
+    const reportJson = {
       '/repo/src/x.ts': {
         statementMap: {
           a: { start: { line: 5, column: 2 }, end: { line: 5, column: 20 } },
@@ -147,9 +155,11 @@ describe('readCoverageReport over real frozen reports', () => {
         b: {},
       },
     }
-    const covered = readIstanbulCoverage(report, { cwd: '/repo' })
-    expect(covered.get('src/x.ts')?.has(5)).toBe(false)
-    expect([8, 9, 10].every((l) => covered.get('src/x.ts')?.has(l))).toBe(true)
+    const report = readIstanbulCoverage(reportJson, { cwd: '/repo' })
+    const entry = report.get('src/x.ts')
+    expect(entry?.executable.has(5)).toBe(true)
+    expect(entry?.covered.has(5)).toBe(false)
+    expect([8, 9, 10].every((l) => entry?.covered.has(l))).toBe(true)
   })
 
   it('an empty report throws; a report that is neither format throws', () => {
@@ -167,12 +177,19 @@ describe('readCoverageReport over real frozen reports', () => {
 
 describe('uncoveredRangesByFile (pure)', () => {
   const logicPaths = { include: ['src/**'] }
+  const reportOf = (entries: Record<string, { covered: number[]; executable: number[] }>) =>
+    new Map(
+      Object.entries(entries).map(([file, { covered, executable }]) => [
+        file,
+        { covered: new Set(covered), executable: new Set(executable) },
+      ]),
+    )
 
   it('covered, uncovered, and partially covered changed hunks', () => {
-    const coveredByFile = new Map([
-      ['src/covered.ts', new Set([1, 2, 3])],
-      ['src/partial.ts', new Set([10, 11, 13])], // 12 never ran
-    ])
+    const report = reportOf({
+      'src/covered.ts': { covered: [1, 2, 3], executable: [1, 2, 3] },
+      'src/partial.ts': { covered: [10, 11, 13], executable: [10, 11, 12, 13] }, // 12 never ran
+    })
     const rangesByFile = new Map([
       ['src/covered.ts', [[1, 4]] as [number, number][]],
       ['src/partial.ts', [[10, 14]] as [number, number][]],
@@ -181,13 +198,24 @@ describe('uncoveredRangesByFile (pure)', () => {
     const { gaps } = uncoveredRangesByFile({
       files: ['src/covered.ts', 'src/partial.ts', 'src/bare.ts'],
       rangesByFile,
-      coveredByFile,
+      report,
       logicPaths,
     })
     expect(gaps).toEqual([
       { file: 'src/bare.ts', ranges: [[1, 6]] },
       { file: 'src/partial.ts', ranges: [[12, 13]] },
     ])
+  })
+
+  it('a changed line no location spans (comment, blank, type-only) is not a finding', () => {
+    const report = reportOf({ 'src/x.ts': { covered: [1], executable: [1] } })
+    const { gaps } = uncoveredRangesByFile({
+      files: ['src/x.ts'],
+      rangesByFile: new Map([['src/x.ts', [[1, 4]]]]),
+      report,
+      logicPaths,
+    })
+    expect(gaps).toEqual([]) // lines 2-3 are in no location span: not executable
   })
 
   it('a trailer-declared file is declared, never a gap; test files and non-logic paths are skipped', () => {
@@ -199,7 +227,7 @@ describe('uncoveredRangesByFile (pure)', () => {
     const { gaps, declared } = uncoveredRangesByFile({
       files: ['src/x.ts', 'src/x.test.ts', 'scripts/y.mjs'],
       rangesByFile,
-      coveredByFile: new Map(),
+      report: new Map(),
       trailers: [{ file: 'src/x.ts', reason: 'self-testing script shape' }],
       logicPaths,
     })
@@ -211,19 +239,72 @@ describe('uncoveredRangesByFile (pure)', () => {
     const { gaps } = uncoveredRangesByFile({
       files: ['src/shrunk.ts'],
       rangesByFile: new Map([['src/shrunk.ts', []]]),
-      coveredByFile: new Map(),
+      report: new Map(),
       logicPaths,
     })
     expect(gaps).toEqual([])
   })
+})
 
-  it('the fingerprint is a stable digest of the line ranges', () => {
-    const a = coverageFingerprint({ file: 'src/x.ts', ranges: [[12, 13]] })
-    const b = coverageFingerprint({ file: 'src/x.ts', ranges: [[12, 13]] })
-    const c = coverageFingerprint({ file: 'src/x.ts', ranges: [[12, 14]] })
-    expect(a).toBe(b)
-    expect(a).not.toBe(c)
-    expect(a).toMatch(/^src\/x\.ts\|[0-9a-f]{16}$/)
+describe('the line-range baseline', () => {
+  it('parses and formats entries (1-based inclusive), refusing malformed ones', () => {
+    expect(parseBaselineEntry('src/x.ts|12')).toEqual({ file: 'src/x.ts', start: 12, end: 12 })
+    expect(parseBaselineEntry('src/x.ts|12-15')).toEqual({ file: 'src/x.ts', start: 12, end: 15 })
+    expect(() => parseBaselineEntry('src/x.ts|15-12')).toThrow(/end before start/)
+    expect(() => parseBaselineEntry('src/x.ts')).toThrow(/not "file\|line"/)
+    expect(formatBaselineEntry('src/x.ts', [12, 13])).toBe('src/x.ts|12')
+    expect(formatBaselineEntry('src/x.ts', [12, 16])).toBe('src/x.ts|12-15')
+  })
+
+  it('subset matching: a gap inside a recorded historical range is excused; anything outside fails', () => {
+    const baseline = [{ file: 'src/old.ts', start: 50, end: 60 }]
+    // A touch inside the historical gap: the modified lines are the PR's, and
+    // the baseline records they were already a gap (plan Q4's anti-fire rule).
+    expect(
+      unexcusedGaps([{ file: 'src/old.ts', ranges: [[52, 55]] }], baseline),
+    ).toEqual([])
+    // A new uncovered line outside any recorded range is the finding.
+    expect(unexcusedGaps([{ file: 'src/old.ts', ranges: [[58, 62]] }], baseline)).toEqual([
+      { file: 'src/old.ts', ranges: [[61, 62]] },
+    ])
+  })
+
+  it('stale re-checks the recorded gap: covered-now or past-EOF lines are stale, only for changed files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vc-stale-'))
+    try {
+      writeFileSync(join(dir, 'src-x.ts'), 'a\nb\nc\nd\ne\n')
+      writeFileSync(join(dir, 'src-untouched.ts'), 'a\nb\nc\n')
+      const baselineEntries = [
+        { file: 'src-x.ts', start: 2, end: 3 }, // line 3 now covered, line 2 still a gap
+        { file: 'src-untouched.ts', start: 1, end: 99 }, // not in play this run: NOT stale
+      ]
+      const report = new Map([
+        ['src-x.ts', { covered: new Set([3]), executable: new Set([2, 3]) }],
+        ['src-untouched.ts', { covered: new Set([1, 2, 3]), executable: new Set([1, 2, 3]) }],
+      ])
+      const stale = staleEntries({ baselineEntries, changedFiles: ['src-x.ts'], report, cwd: dir })
+      expect(stale).toHaveLength(1)
+      expect(stale[0].entry).toEqual({ file: 'src-x.ts', start: 2, end: 3 })
+      expect(stale[0].why).toContain('3')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a baseline entry whose file was deleted is stale even when untouched this run (no fossilization)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vc-stale-'))
+    try {
+      const stale = staleEntries({
+        baselineEntries: [{ file: 'src/gone.ts', start: 1, end: 9 }],
+        changedFiles: [],
+        report: new Map(),
+        cwd: dir,
+      })
+      expect(stale).toHaveLength(1)
+      expect(stale[0].why).toMatch(/no longer exists/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -263,6 +344,14 @@ import { classify } from './calc.js'
 test('positive', () => assert.equal(classify(2), 2))
 `
 
+  const OPTS = (dir: string) => ({
+    base: 'main',
+    logicPaths: { include: ['lib/**'] },
+    coverageReportPath: 'coverage.info',
+    baselinePath: 'verify-baselines/untested.json',
+    cwd: dir,
+  })
+
   function repoWithCalc() {
     const repo = gitFixture()
     repo.write('lib/calc.js', CALC)
@@ -272,39 +361,47 @@ test('positive', () => assert.equal(classify(2), 2))
     return repo
   }
 
-  it('an uncovered changed hunk fails with the NEW fingerprint; the baseline then passes it', () => {
+  it('seeds the historical gap, passes its re-touch, and fails a NEW uncovered line', () => {
     const repo = repoWithCalc()
     try {
       writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
-      const opts = {
-        base: 'main',
-        logicPaths: { include: ['lib/**'] },
-        coverageReportPath: 'coverage.info',
-        baselinePath: 'verify-baselines/untested.json',
-        cwd: repo.dir,
-      }
+      const opts = OPTS(repo.dir)
       // No baseline yet: the check directs to --write-baseline.
       checkUntestedCoverage(opts)
       expect(process.exitCode).toBe(1)
       process.exitCode = undefined
 
-      // Seed, and the same state passes (the gap is baselined).
+      // Seed over the whole tree (not the diff): the calc.js gap at 3-4 lands.
       checkUntestedCoverage({ ...opts, argv: ['--write-baseline'] })
       expect(process.exitCode).toBeUndefined()
       const seeded = JSON.parse(readFileSync(join(repo.dir, 'verify-baselines/untested.json'), 'utf8'))
-      expect(seeded).toHaveLength(1)
-      expect(seeded[0]).toMatch(/^lib\/calc\.js\|[0-9a-f]{16}$/)
+      expect(seeded).toEqual(['lib/calc.js|3-4'])
       repo.addAll()
       repo.commit('seed the untested baseline')
       checkUntestedCoverage(opts)
       expect(process.exitCode).toBeUndefined()
 
-      // A new UNCOVERED change on top fails: the baseline covers only the old gap.
-      repo.write('lib/calc.js', CALC + 'export function uncovered() {\n  return 42\n}\n')
+      // A re-touch INSIDE the recorded historical gap passes (plan Q4's
+      // anti-fire rule), and a NEW uncovered line outside it fails.
+      repo.write(
+        'lib/calc.js',
+        CALC.replace("return 'negative'", "return 'NEGATIVE'") +
+          'export function uncovered() {\n  return 42\n}\n',
+      )
       repo.addAll()
-      repo.commit('add a function no test reaches')
+      repo.commit('reword the gap, add a function no test reaches')
+      writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
       checkUntestedCoverage(opts)
       expect(process.exitCode).toBe(1)
+      process.exitCode = undefined
+
+      // Drop the uncovered addition: the in-gap edit alone passes.
+      repo.write('lib/calc.js', CALC.replace("return 'negative'", "return 'NEGATIVE'"))
+      repo.addAll()
+      repo.commit('drop the uncovered function')
+      writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
+      checkUntestedCoverage(opts)
+      expect(process.exitCode).toBeUndefined()
     } finally {
       process.exitCode = undefined
       repo.cleanup()
@@ -323,14 +420,7 @@ test('positive', () => assert.equal(classify(2), 2))
       repo.addAll()
       repo.commit('cover the negative path')
       writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
-      const opts = {
-        base: 'main',
-        logicPaths: { include: ['lib/**'] },
-        coverageReportPath: 'coverage.info',
-        baselinePath: 'verify-baselines/untested.json',
-        cwd: repo.dir,
-      }
-      // The branch holds the full calc.js addition, ALL of it executed now.
+      const opts = OPTS(repo.dir)
       checkUntestedCoverage(opts)
       expect(process.exitCode).toBeUndefined()
 
@@ -347,44 +437,41 @@ test('positive', () => assert.equal(classify(2), 2))
     }
   })
 
-  it('a baseline entry for a file this change did not touch is NOT stale (scoped ratchet)', () => {
+  it('covering a recorded gap turns its entry STALE (the ratchet shrinks); deleting a baselined file is STALE', () => {
     const repo = repoWithCalc()
     try {
-      // Cover calc's negative path too, so the whole branch is executed and
-      // only the scoped-stale behaviour is under test.
+      repo.write('verify-baselines/untested.json', '["lib/calc.js|3-4"]\n')
+      repo.addAll()
+      repo.commit('commit a baseline holding the calc gap')
+      writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
+      const opts = OPTS(repo.dir)
+      // The gap still exists and the branch state matches: passes.
+      checkUntestedCoverage(opts)
+      expect(process.exitCode).toBeUndefined()
+
+      // Cover the gap: the entry must shrink or go.
       repo.write(
         'lib/calc.test.js',
         CALC_TEST + "test('negative', () => assert.equal(classify(-2), 'negative'))\n",
       )
-      repo.write('lib/other.js', 'export const other = 1\n')
-      repo.write(
-        'lib/other.test.js',
-        `import { test } from 'node:test'
-import assert from 'node:assert'
-import { other } from './other.js'
-test('other', () => assert.equal(other, 1))
-`,
-      )
       repo.addAll()
-      repo.commit('add other, with a pre-existing gap baselined')
-      mkdirSync(join(repo.dir, 'verify-baselines'), { recursive: true })
-      writeFileSync(
-        join(repo.dir, 'verify-baselines/untested.json'),
-        `${JSON.stringify(['lib/untouched.ts|0123456789abcdef'], null, 2)}\n`,
-      )
-      repo.addAll()
-      repo.commit('commit the baseline')
+      repo.commit('cover the negative path')
       writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
-      // lib/untouched.ts is in the baseline but NOT in this change set: no
-      // STALE failure. The change itself is fully covered: no NEW failure.
-      checkUntestedCoverage({
-        base: 'main',
-        logicPaths: { include: ['lib/**'] },
-        coverageReportPath: 'coverage.info',
-        baselinePath: 'verify-baselines/untested.json',
-        cwd: repo.dir,
-      })
+      checkUntestedCoverage(opts)
+      expect(process.exitCode).toBe(1) // STALE lib/calc.js|3-4
+      process.exitCode = undefined
+      repo.write('verify-baselines/untested.json', '[]\n')
+      repo.addAll()
+      repo.commit('the gap is closed; the entry goes')
+      checkUntestedCoverage(opts)
       expect(process.exitCode).toBeUndefined()
+
+      // A baselined file deleted from the tree: the entry fossilizes otherwise.
+      repo.write('verify-baselines/untested.json', '["lib/gone.js|1-9"]\n')
+      repo.addAll()
+      repo.commit('a record whose file is gone')
+      checkUntestedCoverage(opts)
+      expect(process.exitCode).toBe(1)
     } finally {
       process.exitCode = undefined
       repo.cleanup()
