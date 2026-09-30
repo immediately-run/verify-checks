@@ -34,6 +34,24 @@ export function writeBaselineFile(baselinePath, entries) {
   writeFileSync(baselinePath, `${JSON.stringify([...new Set(entries)].sort(), null, 2)}\n`)
 }
 
+// The ratchet's refusal and missing-baseline messages, one home for every
+// check that keeps a shrink-only baseline (the string-equality ratchet below,
+// and the line-range ratchet in check-untested-coverage, whose subset
+// semantics string-diffing cannot express).
+export function baselineOverwriteRefusal(check, baselinePath) {
+  return (
+    `${check}: refusing to overwrite ${baselinePath} — a baseline file already exists there. ` +
+    'Baselines only shrink: fix the findings, or delete the stale entries by hand and let the check confirm.'
+  )
+}
+
+export function baselineMissing(check, baselinePath, cwd) {
+  return (
+    `${check}: no baseline at ${baselinePath} (cwd ${cwd}). ` +
+    'Create it once with --write-baseline, commit it, and never regenerate it.'
+  )
+}
+
 export async function ratchet({
   check,
   findings,
@@ -45,10 +63,7 @@ export async function ratchet({
   const resolvedBaseline = resolve(cwd, baselinePath)
   if (argv.includes('--write-baseline')) {
     if (existsSync(resolvedBaseline)) {
-      console.error(
-        `${check}: refusing to overwrite ${baselinePath} — a baseline file already exists there. ` +
-          'Baselines only shrink: fix the findings, or delete the stale entries by hand and let the check confirm.',
-      )
+      console.error(baselineOverwriteRefusal(check, baselinePath))
       process.exitCode = 1
       return
     }
@@ -58,10 +73,7 @@ export async function ratchet({
   }
   const baseline = readBaseline(resolvedBaseline)
   if (baseline === null) {
-    console.error(
-      `${check}: no baseline at ${baselinePath} (cwd ${cwd}). ` +
-        `Create it once with --write-baseline, commit it, and never regenerate it.`,
-    )
+    console.error(baselineMissing(check, baselinePath, cwd))
     process.exitCode = 1
     return
   }

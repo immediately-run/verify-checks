@@ -1,10 +1,29 @@
+const GLOB_GROUP_OPEN = '\u0001'
+const GLOB_GROUP_CLOSE = '\u0002'
+const GLOB_ALT = '\u0003'
+const GLOB_GLOBSTAR = '\u0004'
+const GLOB_GLOBSTAR_SLASH = '\u0005'
+
 export function globToRegex(pattern) {
   const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '\u0000')
+    .replace(/[.+^$()|[\]\\]/g, '\\$&')
+    // brace expansion, BEFORE * handling and with the braces themselves kept
+    // out of the escape class: `*.{ts,tsx}` becomes `*.(ts|tsx)`. Without this
+    // the braces were matched literally and a braced pattern silently matched
+    // nothing (the R3-674 shape), found by the review gate on 2026-09-30.
+    // The \u0001-\u0005 sentinels are control bytes no glob carries.
+    .replace(/\{([^}]*)\}/g, (_, alts) => `${GLOB_GROUP_OPEN}${alts.replace(/,/g, GLOB_ALT)}${GLOB_GROUP_CLOSE}`)
+    // `**/`, like fast-glob/minimatch, is zero-or-more DIRECTORIES — without
+    // this, `src/**/*.{ts,tsx}` never matches `src/a.ts` (same gate, 2026-09-30).
+    .replace(/\*\*\//g, GLOB_GLOBSTAR_SLASH)
+    .replace(/\*\*/g, GLOB_GLOBSTAR)
     .replace(/\*/g, '[^/]*')
-    .replace(/\u0000/g, '.*')
     .replace(/\?/g, '[^/]')
+    .replaceAll(GLOB_GLOBSTAR_SLASH, '(?:.+/)?')
+    .replaceAll(GLOB_GLOBSTAR, '.*')
+    .replaceAll(GLOB_GROUP_OPEN, '(')
+    .replaceAll(GLOB_ALT, '|')
+    .replaceAll(GLOB_GROUP_CLOSE, ')')
   return new RegExp(`^${escaped}$`)
 }
 
@@ -15,7 +34,7 @@ export function matchesAny(path, { include, exclude = [] }) {
 
 const TEST_EXTENSIONS = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs']
 
-const IS_TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
+export const IS_TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
 
 export function hasSiblingTest(file, testSet) {
   const dot = file.lastIndexOf('.')
