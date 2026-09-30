@@ -1,0 +1,8 @@
+{
+  "comment": "Frozen 2026-09-30: findTokenFindings over landing-page origin/main a41c725 src/index.css + src/sections/docs/docs.css (the two snapshot fixtures beside this file). --muted is declared nowhere in landing-page (R3-743's Why); --nav-h is declared in App.css, outside this two-file scan — in a real adoption the consumer's cssGlobs cover every stylesheet and it resolves.",
+  "findings": [
+    "literal|src/index.css|::selection|color|#16101a",
+    "undeclared|src/sections/docs/docs.css|--muted",
+    "undeclared|src/sections/docs/docs.css|--nav-h"
+  ]
+}

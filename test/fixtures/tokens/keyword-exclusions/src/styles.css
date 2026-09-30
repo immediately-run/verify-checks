@@ -1,0 +1,16 @@
+:root {
+  --brand: #f0f;
+}
+.a {
+  color: transparent;
+}
+.b {
+  color: currentColor;
+}
+.c {
+  color: inherit;
+}
+.d {
+  border-color: none;
+  color: var(--brand);
+}

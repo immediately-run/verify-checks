@@ -5,7 +5,7 @@ Deterministic quality checks shared by the immediately.run core repos
 pinned dependency and driven by each repo's ten-line `scripts/check-*.mjs`
 wrapper.
 
-Four checks, one ratchet:
+Five checks, one ratchet:
 
 | check | producer | baseline fingerprint |
 |---|---|---|
@@ -13,6 +13,7 @@ Four checks, one ratchet:
 | `check-unused` | knip (JSON reporter) | `file:name` across knip's `files`/`exports`/`types`/`dependencies`; `file:(file)` for `files` |
 | `check-untested` | git (merge-base diff + trailers) | failing file path (not baselined) |
 | `check-dead-css` | selector scan vs source usage | `file:.selector` string |
+| `check-tokens` | postcss + postcss-value-parser declaration walk; lexical `var()` scan of sources | `undeclared\|file\|--name` for a `var()` no scanned CSS declares (a fallback does not excuse it); `literal\|file\|selector\|property\|literal` for a colour literal outside a custom-property declaration; `stale-allow\|--name` for a rotten allow entry |
 
 Baselines are **fingerprint sets, not counts**, and they only shrink: a found
 fingerprint missing from the baseline fails the check; a baseline entry that

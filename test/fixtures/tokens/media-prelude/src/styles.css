@@ -1,0 +1,11 @@
+:root {
+  --brand: #f0f;
+}
+@media (max-width: 900px) {
+  .narrow {
+    color: #123456;
+  }
+}
+.top {
+  color: var(--brand);
+}
