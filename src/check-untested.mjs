@@ -1,7 +1,7 @@
 import { changedSince, commitTrailers, trackedTestFiles } from './producers.mjs'
 import { untestedFiles } from './untested-core.mjs'
 
-export { untestedFiles, matchesAny, hasSiblingTest, globToRegex } from './untested-core.mjs'
+export { untestedFiles, matchesAny, hasSiblingTest, globToRegex, IS_TEST_FILE } from './untested-core.mjs'
 // Coverage mode (R3-580): the opted-in successor to the name check below.
 export {
   checkUntestedCoverage,
@@ -12,7 +12,7 @@ export {
   parseBaselineEntry,
   formatBaselineEntry,
 } from './check-untested-coverage.mjs'
-export { changedLineRanges } from './producers.mjs'
+export { changedLineRanges, changedSince } from './producers.mjs'
 export { readCoverageReport, readLcov, readIstanbulCoverage } from './coverage.mjs'
 
 export async function checkUntested({
