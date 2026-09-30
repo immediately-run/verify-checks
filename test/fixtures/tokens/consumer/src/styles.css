@@ -1,0 +1,9 @@
+:root {
+  --brand: #f0f;
+}
+.badge {
+  color: var(--brand);
+}
+.legacy {
+  color: #abcdef;
+}

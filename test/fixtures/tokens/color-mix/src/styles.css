@@ -1,0 +1,7 @@
+:root {
+  --brand: #f0f;
+  --a: #00f;
+}
+.blend {
+  color: color-mix(in oklab, var(--a) 40%, #fff);
+}

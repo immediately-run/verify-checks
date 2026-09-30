@@ -1,0 +1,15 @@
+:root {
+  --brand: #f0f;
+}
+.one {
+  color: #f0f;
+}
+.two {
+  color: rgb(0 0 0);
+}
+.three {
+  color: rebeccapurple;
+}
+.ok {
+  color: var(--brand);
+}

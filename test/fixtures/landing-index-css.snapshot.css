@@ -1,0 +1,86 @@
+/* Frozen fixture — snapshotted 2026-09-30 from landing-page origin/main a41c725 (src/index.css).
+   Copied for R3-743's check-tokens snapshot test; do not regenerate casually:
+   the expected finding set is frozen in landing-tokens.expected.json. */
+@import url('https://fonts.googleapis.com/css2?family=Gabarito:wght@400;500;600;700;800;900&family=Public+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+/* Tokens mirror docs/design-system/colors_and_type.css — the canonical source.
+   Pull from these (never hard-code colors, radii, or fonts). */
+:root{
+  /* surfaces */
+  --bg:#0a0b11;                        /* cool near-black page */
+  --panel:#13141d;                     /* tile / card surface */
+  --panel-2:#191b26;                   /* raised hover surface */
+  /* hairlines */
+  --line:rgba(180,170,225,.14);
+  --line-2:rgba(180,170,225,.22);
+  /* text */
+  --ink:#ecebf4;
+  --ink-2:#9b97b3;
+  --ink-3:#6a677f;
+  /* accents */
+  --accent:oklch(0.74 0.17 350);       /* pink-magenta */
+  --accent-2:oklch(0.66 0.18 295);     /* violet */
+  --accent-3:oklch(0.82 0.12 340);     /* soft pink highlight */
+  /* signature gradient + button fill + glow */
+  --grad:linear-gradient(96deg,#f6f1fb 0%,#f49ad4 46%,#b285f2 100%);
+  --grad-btn:linear-gradient(135deg,oklch(0.74 0.17 350),oklch(0.62 0.18 295));
+  --glow:0 0 0 1px rgba(150,110,240,.5), 0 0 34px rgba(150,110,240,.32);
+  --on-grad:#fff;                      /* text on a gradient fill */
+  /* type families */
+  --disp:"Gabarito",system-ui,sans-serif;
+  --sans:"Public Sans",system-ui,sans-serif;
+  --mono:"Space Mono",ui-monospace,monospace;
+  /* radii */
+  --r-xs:5px;--r-sm:6px;--r-md:12px;--r-lg:16px;--r-xl:18px;--r-pill:30px;
+  /* layout measure + gutter (R3-532, the quiet column — one measure everywhere) */
+  --measure:1004px;
+  --gutter:88px;
+  /* the nav's own layout rule (design-system README "Layout rules"): the bar spans
+     the page in a centred 1280px column with 32px side padding, wider than the
+     reading column's measure — the nav is chrome, not content (R3-750) */
+  --nav-measure:1280px;
+  --nav-gutter:32px;
+  /* elevation */
+  --shadow-card:6px 6px 0 var(--accent-2);   /* hard offset on tile hover */
+  --shadow-pop:0 18px 50px rgba(0,0,0,.5);
+  /* ambient page wash */
+  --wash:
+    radial-gradient(60% 50% at 80% -5%, rgba(178,133,242,.13), transparent 60%),
+    radial-gradient(50% 45% at 8% 4%, rgba(244,154,212,.08), transparent 60%);
+}
+/* ---- LIGHT MODE ---- */
+html[data-theme="light"]{
+  --bg:#f6f4fb;
+  --panel:#ffffff;
+  --panel-2:#efeaf8;
+  --line:rgba(40,24,70,.12);
+  --line-2:rgba(40,24,70,.20);
+  --ink:#1c1726;
+  --ink-2:#5d5670;
+  --ink-3:#938aa6;
+  --accent:oklch(0.55 0.22 1);
+  --accent-2:oklch(0.50 0.21 295);
+  --accent-3:oklch(0.48 0.20 350);
+  --grad:linear-gradient(96deg,#c43d96 0%,#9a45e6 100%);
+  --grad-btn:linear-gradient(135deg,#c43d96,#9a45e6);
+  --glow:0 0 0 1px rgba(150,90,235,.4), 0 8px 26px rgba(150,90,235,.22);
+  --on-grad:#fff;
+  --shadow-pop:0 18px 50px rgba(40,24,70,.16);
+  --wash:
+    radial-gradient(60% 50% at 80% -5%, rgba(154,69,230,.10), transparent 60%),
+    radial-gradient(50% 45% at 8% 4%, rgba(212,69,154,.07), transparent 60%);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;background:var(--bg)}
+body{background:var(--bg);background-image:var(--wash);background-attachment:fixed;
+  color:var(--ink);font-family:var(--sans);line-height:1.5;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden}
+::selection{background:var(--accent);color:#16101a}
+a{color:inherit;text-decoration:none}
+
+/* shared keyframes */
+@keyframes ir-fade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;scroll-behavior:auto!important}}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px}
