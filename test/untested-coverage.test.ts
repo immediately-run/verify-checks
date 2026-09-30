@@ -181,18 +181,15 @@ describe('readCoverageReport over real frozen reports', () => {
     const mountPath = report.get('src/filesystem/mountPath.ts')
     expect(mountPath).toBeDefined()
     expect(mountPath?.covered.has(16)).toBe(true) // the isSafeMountSegment statement, 75 hits
-    expect(mountPath?.covered.size).toBeGreaterThan(20)
-    // executable ⊇ covered (equality is possible: this file's one 0-hit
-    // statement shares line 35 with an executed location)
+    // Statements-only, start-line-only (istanbul's getLineCoverage): 15 of
+    // the file's statement lines are executed; executable == covered here
+    // because this fixture's one 0-hit statement shares line 35 with an
+    // executed one.
+    expect(mountPath?.covered.size).toBe(15)
     expect(mountPath?.executable.size).toBeGreaterThanOrEqual(mountPath?.covered.size ?? 0)
   })
 
-  it('istanbul hits discipline: start lines only — a never-called function body is NOT painted by its declaration', () => {
-    // Unit input, not the frozen fixture. The const-assignment statement
-    // spans lines 8-10 (the whole arrow) with hits 1; the inner return (line
-    // 9) has hits 0. istanbul's own line coverage attributes the START line
-    // only, so 8 is covered and 9-10 are not — span-flattening would let a
-    // whole unused function pass (found with the landing-page probe).
+  it('istanbul hits discipline: a 0-hit statement is executable but not covered (unit-shaped)', () => {
     const reportJson = {
       '/repo/src/x.ts': {
         statementMap: {
@@ -212,8 +209,28 @@ describe('readCoverageReport over real frozen reports', () => {
     expect(entry?.executable.has(5)).toBe(true)
     expect(entry?.covered.has(5)).toBe(false)
     expect(entry?.covered.has(8)).toBe(true)
-    expect(entry?.covered.has(9)).toBe(false) // never executed, despite sitting inside a covered span
-    expect(entry?.executable.has(10)).toBe(false) // the closing line starts nothing
+    expect(entry?.covered.has(9)).toBe(false)
+    expect(entry?.executable.has(10)).toBe(false)
+  })
+
+  // Frozen 2026-09-30: the REAL istanbul report from landing-page's vitest
+  // run while src/lib/navigation.ts carried a never-called probe function
+  // (`__coverageProbe`, appended for the R3-580 discrimination probe and then
+  // reverted). This is the shape that defeated span-flattening: the probe's
+  // declaration (line 92) executes at module load while its body never runs.
+  it('the real landing-page probe report: a never-called function body is uncovered (frozen producer output)', () => {
+    const report = readCoverageReport(
+      join(REPO_ROOT, 'test/fixtures/coverage/landing-probe-coverage-final.snapshot.json'),
+      { cwd: '/home/dev/workspaces/playful-otter/landing-page' },
+    )
+    const nav = report.get('src/lib/navigation.ts')
+    expect(nav).toBeDefined()
+    expect(nav?.covered.has(92)).toBe(true) // export const __coverageProbe = … — the declaration runs
+    expect(nav?.executable.has(93)).toBe(true)
+    expect(nav?.covered.has(93)).toBe(false) // if (n < 0) — never reached
+    expect(nav?.covered.has(94)).toBe(false) // return -1
+    expect(nav?.covered.has(96)).toBe(false) // return n
+    expect(nav?.executable.has(97)).toBe(false) // the closing brace starts no statement
   })
 
   it('an empty report throws; a report that is neither format throws', () => {

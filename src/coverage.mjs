@@ -13,7 +13,8 @@ import { isAbsolute, relative, resolve } from 'node:path'
 //
 // Both answer, per repo-relative path:
 //   covered    — the 1-based lines executed at least once
-//   executable — the 1-based lines ANY location spans (a comment, blank, or
+//   executable — the 1-based lines a mapped location STARTS at (statements
+//                for istanbul; DA lines for lcov). A comment, blank, or
 //                type-only line is in neither set, which is how istanbul-mode
 //                changed comment lines avoid becoming permanent findings; in
 //                lcov mode node marks those lines covered anyway)
@@ -56,26 +57,23 @@ export function readLcov(text, { cwd = process.cwd() } = {}) {
 }
 
 // istanbul coverage-final.json: { <file>: { statementMap, s, fnMap, f, branchMap, b } }.
-// A location is executable by virtue of being mapped; covered when its hit
-// count is > 0. A location contributes its START LINE ONLY — istanbul's own
-// line coverage (getLineCoverage) works this way, and it matters: a
-// never-called arrow function is one executed DECLARATION statement spanning
-// the whole body, so span-flattening would paint the unexecuted body as
-// covered and the #59-shaped probe of a whole unused function would pass.
+// Line coverage is STATEMENTS ONLY, start line only — exactly istanbul's own
+// getLineCoverage (istanbul-lib-coverage file-coverage.js:221-238), verified
+// against the source 2026-09-30. Both halves matter: a never-called arrow
+// function is one executed DECLARATION statement spanning its whole body, so
+// span-flattening paints the unexecuted body as covered (a whole unused
+// function passes the gate — found with the landing-page probe); and branch
+// or fn locations add executable lines no statement covers (a ternary arm's
+// line would become a permanent finding). fnMap/branchMap are read by neither
+// istanbul's line metric nor this reader.
 export function readIstanbulCoverage(json, { cwd = process.cwd() } = {}) {
   const report = new Map()
   for (const [file, data] of Object.entries(json)) {
     const entry = record(report, file, cwd)
-    const mark = (loc, hits) => {
-      if (!loc?.start?.line) return
+    for (const [id, loc] of Object.entries(data.statementMap ?? {})) {
+      if (!loc?.start?.line) continue
       entry.executable.add(loc.start.line)
-      if (hits > 0) entry.covered.add(loc.start.line)
-    }
-    for (const [id, loc] of Object.entries(data.statementMap ?? {})) mark(loc, data.s?.[id])
-    for (const [id, fn] of Object.entries(data.fnMap ?? {})) mark(fn.decl ?? fn.loc, data.f?.[id])
-    for (const [id, branch] of Object.entries(data.branchMap ?? {})) {
-      mark(branch.loc, undefined) // the branch's own loc is executable; hits live per-arm below
-      ;(branch.locations ?? []).forEach((loc, i) => mark(loc, data.b?.[id]?.[i]))
+      if ((data.s?.[id] ?? 0) > 0) entry.covered.add(loc.start.line)
     }
   }
   return report

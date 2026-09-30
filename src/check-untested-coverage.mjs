@@ -72,8 +72,8 @@ export function uncoveredRangesByFile({ files, rangesByFile, report, trailers = 
       let run = null
       for (let line = start; line < end; line += 1) {
         // A file the report never loaded: every line is uncovered. A line no
-        // location spans (comment, blank, type-only) is not executable and is
-        // never a finding.
+        // mapped statement starts at (comment, blank, type-only, a mid-span
+        // continuation) is not executable and is never a finding.
         const isUncovered = entry === undefined ? true : entry.executable.has(line) && !entry.covered.has(line)
         if (isUncovered) {
           run = run ?? [line, line]
@@ -126,7 +126,7 @@ export function unexcusedGaps(gaps, baselineEntries) {
 
 // A file's CURRENT uncovered-executable line count, whole file, same rule the
 // per-diff gap computation uses: a file absent from the report counts every
-// line; a line no location spans is not executable.
+// line; a line no mapped statement starts at is not executable.
 export function uncoveredLineCount(file, report, cwd) {
   const lineCount = lineCountOf(resolve(cwd, file))
   const entry = report.get(file)
