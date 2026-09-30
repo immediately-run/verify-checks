@@ -15,7 +15,7 @@ export function matchesAny(path, { include, exclude = [] }) {
 
 const TEST_EXTENSIONS = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs']
 
-const IS_TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
+export const IS_TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
 
 export function hasSiblingTest(file, testSet) {
   const dot = file.lastIndexOf('.')

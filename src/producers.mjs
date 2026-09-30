@@ -195,3 +195,30 @@ export function trackedTestFiles(cwd = process.cwd()) {
     .map((line) => line.trim())
     .filter(Boolean)
 }
+
+// The new-side line ranges of a file's change, parsed from the hunk headers of
+// `git diff --unified=0 <merge-base>..HEAD -- <file>` — a diff-header parse
+// over a wire format git guarantees (R12 governs parsing SOURCE, not plumbing
+// output). `@@ -a[,b] +c[,d] @@` contributes the half-open range [c, c+d);
+// d === 0 is a pure deletion and contributes nothing. Adjacent or overlapping
+// ranges are merged so the digest is stable across equivalent hunks.
+export function changedLineRanges(base, file, cwd = process.cwd()) {
+  const mb = mergeBase(base, cwd)
+  const diff = run('git', ['diff', '--unified=0', `${mb}..HEAD`, '--', file], cwd)
+  const ranges = []
+  for (const line of diff.split('\n')) {
+    const match = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/)
+    if (!match) continue
+    const start = Number(match[1])
+    const count = match[2] === undefined ? 1 : Number(match[2])
+    if (count > 0) ranges.push([start, start + count])
+  }
+  ranges.sort((a, b) => a[0] - b[0])
+  const merged = []
+  for (const [start, end] of ranges) {
+    const last = merged[merged.length - 1]
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end)
+    else merged.push([start, end])
+  }
+  return merged
+}
