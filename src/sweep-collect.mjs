@@ -44,29 +44,38 @@ export function collectLayout(selectors) {
   }
 
   // The topmost element at the rect's centre is the element or inside it.
+  // null (unknown) when the centre is outside the viewport — elementFromPoint
+  // answers null there whether or not anything occludes the control, and a
+  // below-the-fold control is not an occlusion finding.
   function hitSelf(el, rect) {
-    const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+    const cx = rect.x + rect.width / 2
+    const cy = rect.y + rect.height / 2
+    if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) return null
+    const hit = document.elementFromPoint(cx, cy)
     return hit !== null && (hit === el || el.contains(hit))
   }
 
   // The clipped visible rect: the box intersected with every ancestor whose
-  // overflow is not visible or that sets contain: paint.
+  // overflow is not visible (overflow: clip clips too — only scrolling
+  // differs) or that sets contain: paint. Overflow clips at the padding box,
+  // so the clip bounds come from clientLeft/clientTop + clientWidth/
+  // clientHeight, not the border box.
   function visibleRectOf(el, rect) {
     const vis = { left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height }
     for (let node = el.parentElement; node; node = node.parentElement) {
       const style = getComputedStyle(node)
       const containPaint = (style.contain || '').indexOf('paint') !== -1
-      const clipX = containPaint || (style.overflowX !== 'visible' && style.overflowX !== 'clip')
-      const clipY = containPaint || (style.overflowY !== 'visible' && style.overflowY !== 'clip')
+      const clipX = containPaint || style.overflowX !== 'visible'
+      const clipY = containPaint || style.overflowY !== 'visible'
       if (!clipX && !clipY) continue
       const ar = node.getBoundingClientRect()
       if (clipX) {
-        vis.left = Math.max(vis.left, ar.left)
-        vis.right = Math.min(vis.right, ar.right)
+        vis.left = Math.max(vis.left, ar.left + node.clientLeft)
+        vis.right = Math.min(vis.right, ar.left + node.clientLeft + node.clientWidth)
       }
       if (clipY) {
-        vis.top = Math.max(vis.top, ar.top)
-        vis.bottom = Math.min(vis.bottom, ar.bottom)
+        vis.top = Math.max(vis.top, ar.top + node.clientTop)
+        vis.bottom = Math.min(vis.bottom, ar.top + node.clientTop + node.clientHeight)
       }
     }
     return {
@@ -83,9 +92,11 @@ export function collectLayout(selectors) {
     const id = overlay.getAttribute('id')
     if (!id) return null
     const escaped = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id
+    // ~= : aria-controls is an IDREF LIST — a trigger naming several overlays
+    // still controls this one.
     return (
-      document.querySelector('[aria-controls="' + escaped + '"][aria-expanded="true"]') ||
-      document.querySelector('[aria-controls="' + escaped + '"]')
+      document.querySelector('[aria-controls~="' + escaped + '"][aria-expanded="true"]') ||
+      document.querySelector('[aria-controls~="' + escaped + '"]')
     )
   }
 

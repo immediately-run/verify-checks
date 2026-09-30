@@ -89,14 +89,46 @@ describe('judgeOverlay', () => {
 })
 
 describe('collectLayout is serialisable', () => {
-  it('its source runs through new Function in a scope with no module bindings', () => {
+  it('its source runs through new Function and INVOKES with only browser globals provided', () => {
     // page.evaluate ships the function's source text; a reference to an
-    // import or a closure would die in the page. Rebuilding from source in a
-    // plain Function scope pins the self-containment.
+    // import or a closure would die in the page. Compiling alone would not
+    // catch that (a free identifier only throws on call), so the rebuilt
+    // function is invoked here behind stubbed browser globals: any
+    // module-scope reference throws ReferenceError and turns this red.
     const source = collectLayout.toString()
     expect(source).not.toMatch(/\bimport\b|\brequire\b/)
     const rebuilt = new Function(`return (${source});`)()
     expect(typeof rebuilt).toBe('function')
-    expect(rebuilt.length).toBe(1)
+
+    const styleStub = new Proxy({}, { get: () => '' })
+    const saved: Record<string, unknown> = {}
+    const globals: Record<string, unknown> = {
+      document: {
+        documentElement: { scrollWidth: 0, clientWidth: 0 },
+        querySelectorAll: () => [],
+        querySelector: () => null,
+        elementFromPoint: () => null,
+      },
+      window: { innerWidth: 0, innerHeight: 0 },
+      getComputedStyle: () => styleStub,
+      CSS: { escape: (s: string) => s },
+    }
+    for (const [name, value] of Object.entries(globals)) {
+      saved[name] = (globalThis as any)[name]
+      ;(globalThis as any)[name] = value
+    }
+    try {
+      expect(rebuilt({ controls: '.x', overlays: '.y' })).toEqual({
+        viewport: { w: 0, h: 0 },
+        document: { scrollWidth: 0, clientWidth: 0 },
+        controls: [],
+        overlays: [],
+      })
+    } finally {
+      for (const name of Object.keys(globals)) {
+        if (saved[name] === undefined) delete (globalThis as any)[name]
+        else (globalThis as any)[name] = saved[name]
+      }
+    }
   })
 })

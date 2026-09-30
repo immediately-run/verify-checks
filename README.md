@@ -5,7 +5,7 @@ Deterministic quality checks shared by the immediately.run core repos
 pinned dependency and driven by each repo's ten-line `scripts/check-*.mjs`
 wrapper.
 
-Five checks, one ratchet:
+Six checks, one ratchet:
 
 | check | producer | baseline fingerprint |
 |---|---|---|

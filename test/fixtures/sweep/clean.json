@@ -10,6 +10,15 @@
       "lineHeight": 20,
       "paddingBlock": 28,
       "borderBlock": 0
+    },
+    {
+      "id": "below-fold-cta",
+      "_comment": "Centre below the viewport: hitSelf records null (unknown), and null is NOT an occluded finding.",
+      "rect": { "x": 16, "y": 1200, "width": 200, "height": 48 },
+      "hitSelf": null,
+      "lineHeight": 20,
+      "paddingBlock": 28,
+      "borderBlock": 0
     }
   ],
   "overlays": []
