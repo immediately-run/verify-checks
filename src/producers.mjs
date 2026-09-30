@@ -49,10 +49,15 @@ function fileReadable(path) {
 export function runJscpd({ patterns, ignore = [], minLines = 6, minTokens = 50, cwd = process.cwd() }) {
   const outDir = mkdtempSync(join(tmpdir(), 'verify-checks-jscpd-'))
   try {
+    // R3-674: patterns go through -p/--pattern, NOT positionally — jscpd 5.x
+    // treats positional arguments as literal PATHS, so a glob scanned zero
+    // files and check:clones passed vacuously in every consumer. (A bare
+    // directory positional happens to work — which is exactly why the old
+    // fixture test, which passed one, never saw this.)
     const args = [
       '--no-install',
       'jscpd',
-      ...patterns,
+      ...patterns.flatMap((pattern) => ['--pattern', pattern]),
       '--reporters',
       'json',
       '--output',

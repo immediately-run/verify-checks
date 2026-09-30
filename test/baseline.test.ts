@@ -34,8 +34,11 @@ describe('diffAgainstBaseline', () => {
 // object shaped like what we believe jscpd emits.
 describe('runJscpd (real producer)', () => {
   it('reports the duplicated fixture function and its fragments feed the ratchet', { timeout: 180_000 }, () => {
+    // The consumer shape is GLOBS (all five repos) — the literal-directory
+    // positional that used to make this test pass is exactly what masked
+    // R3-674's vacuity.
     const report = runJscpd({
-      patterns: ['test/fixtures/clones'],
+      patterns: ['test/fixtures/clones/**'],
       cwd: REPO_ROOT,
     })
     const fragments = cloneFragments(report)
@@ -46,6 +49,19 @@ describe('runJscpd (real producer)', () => {
     const { new: fresh, stale } = diffAgainstBaseline(found, [])
     expect(fresh).toEqual([...found].sort())
     expect(stale).toEqual([])
+  })
+
+  // R3-674: the fault injection that found the vacuity. Consumers pass GLOBS,
+  // and jscpd 5.x reads positional arguments as literal paths — so the glob
+  // scanned zero files and the gate could not fail. The case below passes a
+  // glob through the consumer shape; the planted clone must be found.
+  it('a glob pattern actually scans (the vacuity regression)', { timeout: 180_000 }, () => {
+    const report = runJscpd({
+      patterns: ['test/fixtures/clones/**/*.{js,ts}'],
+      cwd: REPO_ROOT,
+    })
+    const fragments = cloneFragments(report)
+    expect(fragments.some((fragment) => fragment.includes('formatTileLabel'))).toBe(true)
   })
 })
 
