@@ -88,6 +88,7 @@ export const CSS_NAMED_COLORS = Object.freeze([
   'lime',
   'limegreen',
   'linen',
+  'magenta',
   'maroon',
   'mediumaquamarine',
   'mediumblue',

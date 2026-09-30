@@ -9,7 +9,7 @@ import { CSS_NAMED_COLORS } from './cssNamedColors.mjs'
 // check-tokens — every var() resolves to a declared token, and no raw colours
 // outside token declarations (R3-743; plans/design-system-conformance step A1).
 //
-// Two finding kinds, both fingerprinted into the shrink-only ratchet:
+// Three finding kinds, all fingerprinted into the shrink-only ratchet:
 //   undeclared|<file>|--name                       — a var() reference no scanned CSS declares
 //   literal|<file>|<selector>|<property>|<literal> — a colour literal in an ordinary declaration
 //   stale-allow|--name                             — an allow entry that CSS declares or nothing references

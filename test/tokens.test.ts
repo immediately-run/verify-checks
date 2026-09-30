@@ -3,6 +3,42 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { checkTokens, findTokenFindings, loadTokenInputs } from '../src/check-tokens.mjs'
+import { CSS_NAMED_COLORS } from '../src/cssNamedColors.mjs'
+
+// The full CSS Color 4 named-colour table (148 keywords, fuchsia AND magenta
+// included) — the class is enumerated, not probed, so a dropped keyword fails
+// here instead of passing silently as a missed literal (found in review:
+// 'magenta' was missing from a hand-copied list).
+const CSS_COLOR_4_KEYWORDS = [
+  'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque', 'black',
+  'blanchedalmond', 'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue', 'chartreuse',
+  'chocolate', 'coral', 'cornflowerblue', 'cornsilk', 'crimson', 'cyan', 'darkblue', 'darkcyan',
+  'darkgoldenrod', 'darkgray', 'darkgrey', 'darkgreen', 'darkkhaki', 'darkmagenta',
+  'darkolivegreen', 'darkorange', 'darkorchid', 'darkred', 'darksalmon', 'darkseagreen',
+  'darkslateblue', 'darkslategray', 'darkslategrey', 'darkturquoise', 'darkviolet', 'deeppink',
+  'deepskyblue', 'dimgray', 'dimgrey', 'dodgerblue', 'firebrick', 'floralwhite', 'forestgreen',
+  'fuchsia', 'gainsboro', 'ghostwhite', 'gold', 'goldenrod', 'gray', 'green', 'greenyellow',
+  'grey', 'honeydew', 'hotpink', 'indianred', 'indigo', 'ivory', 'khaki', 'lavender',
+  'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue', 'lightcoral', 'lightcyan',
+  'lightgoldenrodyellow', 'lightgray', 'lightgrey', 'lightgreen', 'lightpink', 'lightsalmon',
+  'lightseagreen', 'lightskyblue', 'lightslategray', 'lightslategrey', 'lightsteelblue',
+  'lightyellow', 'lime', 'limegreen', 'linen', 'magenta', 'maroon', 'mediumaquamarine',
+  'mediumblue', 'mediumorchid', 'mediumpurple', 'mediumseagreen', 'mediumslateblue',
+  'mediumspringgreen', 'mediumturquoise', 'mediumvioletred', 'midnightblue', 'mintcream',
+  'mistyrose', 'moccasin', 'navajowhite', 'navy', 'oldlace', 'olive', 'olivedrab', 'orange',
+  'orangered', 'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise', 'palevioletred',
+  'papayawhip', 'peachpuff', 'peru', 'pink', 'plum', 'powderblue', 'purple', 'rebeccapurple',
+  'red', 'rosybrown', 'royalblue', 'saddlebrown', 'salmon', 'sandybrown', 'seagreen', 'seashell',
+  'sienna', 'silver', 'skyblue', 'slateblue', 'slategray', 'slategrey', 'snow', 'springgreen',
+  'steelblue', 'tan', 'teal', 'thistle', 'tomato', 'turquoise', 'violet', 'wheat', 'white',
+  'whitesmoke', 'yellow', 'yellowgreen',
+]
+
+describe('cssNamedColors', () => {
+  it('is exactly the 148-keyword CSS Color 4 table', () => {
+    expect([...CSS_NAMED_COLORS].sort()).toEqual([...CSS_COLOR_4_KEYWORDS].sort())
+  })
+})
 
 // Fixture-driven, consumer-shaped on purpose: cssGlobs ['src/**/*.css'] and
 // sourceGlobs ['src/**/*.{ts,tsx}'] with cwd set to the fixture root — passing
@@ -84,8 +120,15 @@ describe('check-tokens allow entries', () => {
 
 describe('check-tokens is non-vacuous by construction', () => {
   it('throws, naming the globs, when cssGlobs match zero files', () => {
-    const cwd = join(FIXTURES, 'empty')
-    expect(() => loadTokenInputs({ cssGlobs: ['src/**/*.css'], cwd })).toThrow(/src\/\*\*\/\*\.css/)
+    // A genuinely empty directory, made by the test itself — an untracked
+    // fixture dir would pass for the wrong reason (fast-glob on a missing
+    // cwd returns []) and disappear on a fresh clone.
+    const cwd = mkdtempSync(join(tmpdir(), 'check-tokens-empty-'))
+    try {
+      expect(() => loadTokenInputs({ cssGlobs: ['src/**/*.css'], cwd })).toThrow(/src\/\*\*\/\*\.css/)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 
   it('throws when zero custom properties are declared', async () => {
