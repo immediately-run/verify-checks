@@ -13,7 +13,8 @@ import {
   uncoveredRangesByFile,
   unexcusedGaps,
 } from '../src/check-untested-coverage.mjs'
-import { changedLineRanges, parseUnifiedDiffRanges } from '../src/producers.mjs'
+import { changedLineRanges, parseUnifiedDiffRanges, unquoteGitPath } from '../src/producers.mjs'
+import { globToRegex, matchesAny } from '../src/untested-core.mjs'
 
 const REPO_ROOT = new URL('..', import.meta.url).pathname
 
@@ -41,6 +42,50 @@ function gitFixture() {
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   }
 }
+
+describe('globToRegex (the check AND the seeder match through this)', () => {
+  it('expands braces; a globstar matches zero or more directories', () => {
+    const braced = globToRegex('src/**/*.{ts,tsx}')
+    expect(braced.test('src/a.ts')).toBe(true) // root-level: **/ is zero dirs
+    expect(braced.test('src/deep/b.tsx')).toBe(true)
+    expect(braced.test('src/a.css')).toBe(false)
+
+    expect(globToRegex('src/**').test('src/x.js')).toBe(true)
+    expect(globToRegex('src/**').test('src/x/y.js')).toBe(true)
+    expect(globToRegex('src/lib/**').test('src/other/a.ts')).toBe(false)
+    expect(globToRegex('scripts/*.mjs').test('scripts/deep/a.mjs')).toBe(false)
+    expect(globToRegex('**/*.test.ts').test('a.test.ts')).toBe(true) // leading **/
+    expect(globToRegex('src/**/*.test.ts').test('src/a.test.ts')).toBe(true)
+  })
+
+  it('matchesAny consults include then exclude', () => {
+    const paths = { include: ['src/**/*.{ts,tsx}'], exclude: ['src/gen/**'] }
+    expect(matchesAny('src/a.ts', paths)).toBe(true)
+    expect(matchesAny('src/gen/a.ts', paths)).toBe(false)
+    expect(matchesAny('lib/a.ts', paths)).toBe(false)
+  })
+})
+
+describe('git path quoting (reversed, never silently dropped)', () => {
+  it('+++ headers: TAB after space-bearing names, C-quoted non-ASCII', () => {
+    const diff = [
+      '+++ b/lib/with space.ts\t',
+      '@@ -0,0 +1,2 @@',
+      '+++ "b/lib/caf\\303\\251.ts"',
+      '@@ -0,0 +1 @@',
+    ].join('\n')
+    const ranges = parseUnifiedDiffRanges(diff)
+    expect(ranges.get('lib/with space.ts')).toEqual([[1, 3]])
+    expect(ranges.get('lib/café.ts')).toEqual([[1, 2]])
+  })
+
+  it('unquoteGitPath round-trips octal and simple escapes', () => {
+    expect(unquoteGitPath('b/lib/plain.ts')).toBe('b/lib/plain.ts')
+    expect(unquoteGitPath('"b/lib/caf\\303\\251.ts"')).toBe('b/lib/café.ts')
+    expect(unquoteGitPath('"b/lib/a\\"b.ts"')).toBe('b/lib/a"b.ts')
+    expect(() => unquoteGitPath('"b/lib/a\\q.ts"')).toThrow(/unknown escape/)
+  })
+})
 
 describe('parseUnifiedDiffRanges (pure)', () => {
   it('parses hunk headers into per-file half-open ranges and merges adjoining hunks', () => {
@@ -488,6 +533,21 @@ test('positive', () => assert.equal(classify(2), 2))
       repo.write('lib/self-testing.js', 'export const ok = true\n')
       repo.addAll()
       repo.commit('add self-testing script\n\nUntested: lib/self-testing.js — exercised by its own --self-test leg')
+      writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
+      checkUntestedCoverage(opts)
+      expect(process.exitCode).toBeUndefined()
+
+      // A trailer-declared file that is ALSO baselined and GROWS: the trailer
+      // is the escape for the whole instrument, growth guard included
+      // (review round 3 — the guard used to fail it with a message
+      // recommending the trailer it already carried).
+      repo.write('lib/gen.js', 'export const a = 1\n')
+      repo.write('verify-baselines/untested.json', '["lib/gen.js|1"]\n')
+      repo.addAll()
+      repo.commit('baseline a generated file\n\nUntested: lib/gen.js — generated file, no runtime path to test')
+      repo.write('lib/gen.js', 'export const a = 1\nexport const b = 2\nexport const c = 3\n')
+      repo.addAll()
+      repo.commit('regenerate\n\nUntested: lib/gen.js — generated file, no runtime path to test')
       writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
       checkUntestedCoverage(opts)
       expect(process.exitCode).toBeUndefined()

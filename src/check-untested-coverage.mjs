@@ -309,8 +309,14 @@ export function checkUntestedCoverage({
   for (const finding of findings) {
     console.error(`untested: NEW ${finding.file}|${finding.ranges.map((r) => formatRange(r)).join(',')}`)
   }
-  // The growth guard: see growthViolations above.
-  const growth = growthViolations({ baselineEntries, changedFiles: changed, report, cwd })
+  // The growth guard: see growthViolations above. The trailer escape applies
+  // here exactly as in the gap computation (plan Q5): a declared file is out
+  // of the instrument entirely.
+  const trailerFiles = new Set(trailers.map((trailer) => trailer.file))
+  const growthChecked = changed.filter(
+    (file) => !trailerFiles.has(file) && !IS_TEST_FILE.test(file) && matchesAny(file, logicPaths),
+  )
+  const growth = growthViolations({ baselineEntries, changedFiles: growthChecked, report, cwd })
   for (const { file, current, recordedTotal } of growth) {
     console.error(
       `untested: NEW ${file} — the recorded gap grew (${current} uncovered lines now vs ${recordedTotal} recorded); ` +

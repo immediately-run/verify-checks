@@ -179,10 +179,42 @@ export function changedSince(base, cwd = process.cwd()) {
   // ACMRT excludes D: a deleted logic file must not be demanded a sibling
   // test — complete deletion (logic AND test gone together) is the shape the
   // repos' review asks for, and listing deleted paths would push the opposite.
-  return run('git', ['diff', '--name-only', '--diff-filter=ACMRT', `${mb}..HEAD`], cwd)
-    .split('\n')
+  // -z: NUL-terminated and UNQUOTED — newline output C-quotes non-ASCII paths
+  // ("lib/caf\303\251.js"), which then fail every downstream path compare.
+  return run('git', ['diff', '--name-only', '-z', '--diff-filter=ACMRT', `${mb}..HEAD`], cwd)
+    .split('\0')
     .map((line) => line.trim())
     .filter(Boolean)
+}
+
+// Git's C-style path quoting (core.quotePath), reversed: "\"b/lib/caf\\303\\251.js\""
+// → "lib/café.js". The +++ headers of a patch quote non-ASCII paths this way
+// and append a TAB after space-bearing names; both are handled by the caller
+// (parseUnifiedDiffRanges) before this runs.
+export function unquoteGitPath(raw) {
+  let path = raw
+  if (path.startsWith('"')) {
+    const body = path.slice(1, path.lastIndexOf('"'))
+    const bytes = []
+    for (let i = 0; i < body.length; i += 1) {
+      if (body[i] !== '\\') {
+        bytes.push(...Buffer.from(body[i], 'utf8'))
+        continue
+      }
+      const next = body[i + 1]
+      if (/[0-7]/.test(next)) {
+        bytes.push(parseInt(body.slice(i + 1, i + 4), 8))
+        i += 3
+      } else {
+        const simple = { n: '\n', t: '\t', r: '\r', '"': '"', '\\': '\\' }[next]
+        if (simple === undefined) throw new Error(`unquoteGitPath: unknown escape \\${next} in ${raw}`)
+        bytes.push(...Buffer.from(simple, 'utf8'))
+        i += 1
+      }
+    }
+    path = Buffer.from(bytes).toString('utf8')
+  }
+  return path
 }
 
 export function commitTrailers(base, cwd = process.cwd()) {
@@ -197,8 +229,9 @@ export function commitTrailers(base, cwd = process.cwd()) {
 }
 
 export function trackedTestFiles(cwd = process.cwd()) {
-  return run('git', ['ls-files', '*.test.*', '*.spec.*'], cwd)
-    .split('\n')
+  // -z, as in changedSince: NUL-terminated and unquoted.
+  return run('git', ['ls-files', '-z', '*.test.*', '*.spec.*'], cwd)
+    .split('\0')
     .map((line) => line.trim())
     .filter(Boolean)
 }
@@ -216,8 +249,12 @@ export function parseUnifiedDiffRanges(diffText) {
   let current = null
   for (const line of diffText.split('\n')) {
     if (line.startsWith('+++ ')) {
-      const match = line.match(/^\+\+\+ b\/(.+)$/)
-      current = match ? match[1] : null
+      // git appends a TAB after a space-bearing path in this header, and
+      // C-quotes non-ASCII paths ("b/lib/caf\303\251.js") — patch output has
+      // no -z form, so both are reversed here.
+      const raw = line.slice(4).split('\t')[0]
+      const unquoted = unquoteGitPath(raw)
+      current = unquoted.startsWith('b/') ? unquoted.slice(2) : null
       continue
     }
     const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/)
