@@ -3,8 +3,15 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-function run(cmd, args, cwd) {
-  return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+function run(cmd, args, cwd, { maxBuffer = 1024 * 1024 } = {}) {
+  try {
+    return execFileSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer, stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch (err) {
+    if (err.code === 'ENOBUFS') {
+      throw new Error(`${cmd} ${args[0]} output exceeded the ${maxBuffer}-byte maxBuffer — split the call or raise the bound`)
+    }
+    throw err
+  }
 }
 
 function toolMissing(err) {
@@ -230,6 +237,10 @@ export function parseUnifiedDiffRanges(diffText) {
 export function changedLineRanges(base, files, cwd = process.cwd()) {
   const mb = mergeBase(base, cwd)
   if (files.length === 0) return new Map()
-  const diff = run('git', ['diff', '--unified=0', `${mb}..HEAD`, '--', ...files], cwd)
+  // One diff over the whole changed set — the output scales with the PR, so
+  // the buffer is explicit (64 MiB) and an overflow names the bound.
+  const diff = run('git', ['diff', '--unified=0', `${mb}..HEAD`, '--', ...files], cwd, {
+    maxBuffer: 64 * 1024 * 1024,
+  })
   return parseUnifiedDiffRanges(diff)
 }

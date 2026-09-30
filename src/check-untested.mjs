@@ -3,7 +3,15 @@ import { untestedFiles } from './untested-core.mjs'
 
 export { untestedFiles, matchesAny, hasSiblingTest, globToRegex } from './untested-core.mjs'
 // Coverage mode (R3-580): the opted-in successor to the name check below.
-export { checkUntestedCoverage, uncoveredRangesByFile, coverageFingerprint } from './check-untested-coverage.mjs'
+export {
+  checkUntestedCoverage,
+  uncoveredRangesByFile,
+  unexcusedGaps,
+  staleEntries,
+  growthViolations,
+  parseBaselineEntry,
+  formatBaselineEntry,
+} from './check-untested-coverage.mjs'
 export { changedLineRanges } from './producers.mjs'
 export { readCoverageReport, readLcov, readIstanbulCoverage } from './coverage.mjs'
 

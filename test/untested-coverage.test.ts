@@ -7,6 +7,7 @@ import { readCoverageReport, readLcov, readIstanbulCoverage } from '../src/cover
 import {
   checkUntestedCoverage,
   formatBaselineEntry,
+  growthViolations,
   parseBaselineEntry,
   staleEntries,
   uncoveredRangesByFile,
@@ -291,6 +292,51 @@ describe('the line-range baseline', () => {
     }
   })
 
+  it('growth guard: new uncovered lines inside a recorded range fail even though membership excuses them', () => {
+    // The review gate's round-2 scenario: a whole-file gap (6 lines) recorded
+    // for a never-loaded file; the PR inserts 3 brand-new uncovered lines
+    // inside the recorded range. Membership excuses the changed lines
+    // ([4,7) ⊆ [1,6]); the whole-file uncovered count grew 6 → 9.
+    const dir = mkdtempSync(join(tmpdir(), 'vc-growth-'))
+    try {
+      mkdirSync(join(dir, 'lib'))
+      writeFileSync(join(dir, 'lib', 'legacy.js'), 'a\nb\nc\nd\nf\ng\nh\ni\nj\n') // 9 lines, none covered
+      const baselineEntries = [{ file: 'lib/legacy.js', start: 1, end: 6 }]
+      const violations = growthViolations({
+        baselineEntries,
+        changedFiles: ['lib/legacy.js'],
+        report: new Map(), // never loaded: every line uncovered
+        cwd: dir,
+      })
+      expect(violations).toEqual([{ file: 'lib/legacy.js', current: 9, recordedTotal: 6 }])
+      // A shift without growth (same uncovered content, moved) is not a violation.
+      writeFileSync(join(dir, 'lib', 'legacy.js'), 'a\nb\nc\nd\nf\ng\n')
+      expect(
+        growthViolations({ baselineEntries, changedFiles: ['lib/legacy.js'], report: new Map(), cwd: dir }),
+      ).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a file with no trailing newline counts its last line (the boundary convention)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vc-eof-'))
+    try {
+      // 'a\nb' is TWO lines; the naive split('\n').length - 1 reads one, and
+      // line 2 would false-STALE as past-EOF.
+      writeFileSync(join(dir, 'src-noeol.ts'), 'a\nb')
+      const stale = staleEntries({
+        baselineEntries: [{ file: 'src-noeol.ts', start: 1, end: 2 }],
+        changedFiles: ['src-noeol.ts'],
+        report: new Map(),
+        cwd: dir,
+      })
+      expect(stale).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('a baseline entry whose file was deleted is stale even when untouched this run (no fossilization)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vc-stale-'))
     try {
@@ -402,6 +448,20 @@ test('positive', () => assert.equal(classify(2), 2))
       writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
       checkUntestedCoverage(opts)
       expect(process.exitCode).toBeUndefined()
+
+      // The growth guard (review round 2): NEW uncovered lines inserted
+      // INSIDE the recorded range — membership alone would excuse them, but
+      // the file's whole-file uncovered count grew past the recorded total.
+      repo.write(
+        'lib/calc.js',
+        "export function brandNew() {\n  return 'never called'\n}\n" + CALC,
+      )
+      repo.addAll()
+      repo.commit('prepend a new uncovered function (shifts the old gap)')
+      writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
+      checkUntestedCoverage(opts)
+      expect(process.exitCode).toBe(1)
+      process.exitCode = undefined
     } finally {
       process.exitCode = undefined
       repo.cleanup()

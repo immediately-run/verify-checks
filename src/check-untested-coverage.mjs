@@ -124,6 +124,29 @@ export function unexcusedGaps(gaps, baselineEntries) {
   return findings
 }
 
+// A file's CURRENT uncovered-executable line count, whole file, same rule the
+// per-diff gap computation uses: a file absent from the report counts every
+// line; a line no location spans is not executable.
+export function uncoveredLineCount(file, report, cwd) {
+  const lineCount = lineCountOf(resolve(cwd, file))
+  const entry = report.get(file)
+  if (entry === undefined) return lineCount
+  let count = 0
+  for (let line = 1; line <= lineCount; line += 1) {
+    if (entry.executable.has(line) && !entry.covered.has(line)) count += 1
+  }
+  return count
+}
+
+// A file's line count: newlines, plus one for a non-empty file with no
+// trailing newline (its last line exists even unterminated).
+function lineCountOf(path) {
+  const text = readFileSync(path, 'utf8')
+  if (text === '') return 0
+  const newlines = text.split('\n').length - 1
+  return text.endsWith('\n') ? newlines : newlines + 1
+}
+
 // The recorded gaps that no longer exist: entry lines whose file vanished at
 // HEAD (checked for EVERY entry — a deleted file's record fossilizes
 // otherwise), and — for files this run changed, where a fresh re-check is
@@ -138,7 +161,7 @@ export function staleEntries({ baselineEntries, changedFiles, report, cwd }) {
       continue
     }
     if (!changedSet.has(entry.file)) continue
-    const lineCount = readFileSync(path, 'utf8').split('\n').length - 1
+    const lineCount = lineCountOf(path)
     const reportEntry = report.get(entry.file)
     const deadLines = []
     for (let line = entry.start; line <= entry.end; line += 1) {
@@ -156,6 +179,27 @@ export function staleEntries({ baselineEntries, changedFiles, report, cwd }) {
     }
   }
   return stale
+}
+
+// The growth guard: line membership alone cannot tell an old gap line from a
+// NEW uncovered line occupying a recorded range after an edit (found by the
+// review gate, 2026-09-30). For every changed file with recorded ranges, the
+// file's CURRENT whole-file uncovered count must not exceed the recorded
+// total — a recorded gap may shrink or move, never grow.
+export function growthViolations({ baselineEntries, changedFiles, report, cwd }) {
+  const recordedTotalByFile = new Map()
+  for (const entry of baselineEntries) {
+    recordedTotalByFile.set(entry.file, (recordedTotalByFile.get(entry.file) ?? 0) + (entry.end - entry.start + 1))
+  }
+  const violations = []
+  for (const file of changedFiles) {
+    const recordedTotal = recordedTotalByFile.get(file)
+    if (recordedTotal === undefined) continue
+    if (!existsSync(resolve(cwd, file))) continue // deleted: the stale pass reports it
+    const current = uncoveredLineCount(file, report, cwd)
+    if (current > recordedTotal) violations.push({ file, current, recordedTotal })
+  }
+  return violations
 }
 
 export function checkUntestedCoverage({
@@ -192,13 +236,23 @@ export function checkUntestedCoverage({
       process.exitCode = 1
       return
     }
+    // The file universe comes from fast-glob (a superset reader) but is then
+    // filtered through matchesAny — the check's own matcher — so a pattern
+    // the check cannot express seeds nothing the check would skip, and zero
+    // matches is loud (R3-674), never a vacuous green.
     const files = fastGlob
-      .sync([...logicPaths.include, ...(logicPaths.exclude ?? []).map((p) => `!${p}`)], { cwd })
+      .sync(logicPaths.include, { cwd })
+      .filter((file) => matchesAny(file, logicPaths))
       .filter((file) => !IS_TEST_FILE.test(file))
       .sort()
+    if (files.length === 0) {
+      throw new Error(
+        `check-untested-coverage: logicPaths matched zero files for seeding (include: ${logicPaths.include.join(', ')}; cwd ${cwd})`,
+      )
+    }
     const entries = []
     for (const file of files) {
-      const lineCount = readFileSync(resolve(cwd, file), 'utf8').split('\n').length - 1
+      const lineCount = lineCountOf(resolve(cwd, file))
       if (lineCount === 0) continue
       const reportEntry = report.get(file)
       const ranges = []
@@ -255,12 +309,22 @@ export function checkUntestedCoverage({
   for (const finding of findings) {
     console.error(`untested: NEW ${finding.file}|${finding.ranges.map((r) => formatRange(r)).join(',')}`)
   }
+  // The growth guard: see growthViolations above.
+  const growth = growthViolations({ baselineEntries, changedFiles: changed, report, cwd })
+  for (const { file, current, recordedTotal } of growth) {
+    console.error(
+      `untested: NEW ${file} — the recorded gap grew (${current} uncovered lines now vs ${recordedTotal} recorded); ` +
+        'cover the new lines, or declare the file with an Untested: trailer',
+    )
+  }
   const stale = staleEntries({ baselineEntries, changedFiles: changed, report, cwd })
   for (const { entry, why } of stale) {
     console.error(`untested: STALE ${entry.file}|${entry.start}${entry.end === entry.start ? '' : `-${entry.end}`} — ${why}`)
   }
-  if (findings.length > 0 || stale.length > 0) {
-    console.error(`untested: ${findings.length} new, ${stale.length} stale (baseline ${baselinePath})`)
+  if (findings.length > 0 || growth.length > 0 || stale.length > 0) {
+    console.error(
+      `untested: ${findings.length + growth.length} new, ${stale.length} stale (baseline ${baselinePath})`,
+    )
     process.exitCode = 1
   }
 }
