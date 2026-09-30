@@ -38,6 +38,10 @@ jobs:
         run: npm run check:publish-version
       - run: npm ci
       - run: npm test
+      # R3-580 — the repo self-hosts its own coverage gate (src/**); the
+      # wrapper runs vitest with coverage itself. fetch-depth: 0 above is
+      # what makes origin/main resolvable here.
+      - run: npm run check:untested
 
   release:
     needs: test
