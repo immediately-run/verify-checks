@@ -1,0 +1,16 @@
+{
+  "_comment": "A clean snapshot: no finding of any kind.",
+  "viewport": { "w": 390, "h": 844 },
+  "document": { "scrollWidth": 390, "clientWidth": 390 },
+  "controls": [
+    {
+      "id": "nav-home",
+      "rect": { "x": 16, "y": 8, "width": 48, "height": 48 },
+      "hitSelf": true,
+      "lineHeight": 20,
+      "paddingBlock": 28,
+      "borderBlock": 0
+    }
+  ],
+  "overlays": []
+}

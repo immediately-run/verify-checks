@@ -14,6 +14,7 @@ Five checks, one ratchet:
 | `check-untested` | git (merge-base diff + trailers) | failing file path (not baselined) |
 | `check-dead-css` | selector scan vs source usage | `file:.selector` string |
 | `check-tokens` | postcss + postcss-value-parser declaration walk; lexical `var()` scan of sources | `undeclared\|file\|--name` for a `var()` no scanned CSS declares (a fallback does not excuse it); `literal\|file\|selector\|property\|literal` for a colour literal outside a custom-property declaration; `stale-allow\|--name` for a rotten allow entry |
+| `check-sweep` (`./sweep`) | pure geometry judges over a `LayoutSnapshot` collected in the consumer's browser | `overflow-x\|route\|vp`; `offscreen\|route\|vp\|control`; `occluded\|route\|vp\|control`; `target-small\|route\|vp\|control`; `wrapped\|route\|vp\|control`; `overlay-offscreen\|route\|vp\|trigger`; `overlay-clipped\|route\|vp\|trigger`; `overlay-detached\|route\|vp\|trigger`; `empty\|route\|vp\|controls` and `overlay-missing\|route\|vp\|trigger` so a broken selector turns red |
 
 Baselines are **fingerprint sets, not counts**, and they only shrink: a found
 fingerprint missing from the baseline fails the check; a baseline entry that
@@ -23,4 +24,7 @@ exists — a regenerated golden asserts nothing.
 
 Nothing here renders, fetches, or needs a browser; every check fails loudly
 naming what it could not determine (a missing `origin/main`, a missing tool,
-an unreadable baseline) rather than passing.
+an unreadable baseline) rather than passing. The sweep module is the one
+exception in shape, not in spirit: it never launches a browser itself — it
+hands a self-contained collector function to the consumer's browser
+(`page.evaluate`) and judges the plain data that comes back.

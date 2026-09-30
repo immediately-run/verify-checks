@@ -1,0 +1,15 @@
+{
+  "_comment": "Modelled on R3-739's side-panel seam menu: the box runs to x = 300 but a clipping ancestor (overflow not visible) cuts the visible rect at the rail edge, x = 113. The viewport check alone passes this.",
+  "viewport": { "w": 1280, "h": 800 },
+  "document": { "scrollWidth": 1280, "clientWidth": 1280 },
+  "controls": [],
+  "overlays": [
+    {
+      "id": "seam-menu",
+      "rect": { "x": 100, "y": 44, "width": 200, "height": 300 },
+      "visibleRect": { "x": 100, "y": 44, "width": 13, "height": 300 },
+      "triggerId": "rail-menu-button",
+      "triggerRect": { "x": 100, "y": 0, "width": 100, "height": 40 }
+    }
+  ]
+}

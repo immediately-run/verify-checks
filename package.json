@@ -1,6 +1,6 @@
 {
   "name": "@immediately-run/verify-checks",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Deterministic quality checks shared by the immediately.run core repos: clones (jscpd), unused exports (knip), untested logic (git merge-base + Untested trailers), dead CSS, tokens (undeclared var() references and raw colour literals). Baselines are fingerprint sets that only shrink.",
   "license": "UNLICENSED",
   "repository": {
@@ -18,7 +18,8 @@
     "./unused": "./src/check-unused.mjs",
     "./untested": "./src/check-untested.mjs",
     "./dead-css": "./src/check-dead-css.mjs",
-    "./tokens": "./src/check-tokens.mjs"
+    "./tokens": "./src/check-tokens.mjs",
+    "./sweep": "./src/sweep.mjs"
   },
   "files": [
     "src"
