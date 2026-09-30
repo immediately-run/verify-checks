@@ -187,14 +187,20 @@ describe('readCoverageReport over real frozen reports', () => {
     expect(mountPath?.executable.size).toBeGreaterThanOrEqual(mountPath?.covered.size ?? 0)
   })
 
-  it('istanbul hits discipline: a 0-hit location is executable but not covered', () => {
+  it('istanbul hits discipline: start lines only — a never-called function body is NOT painted by its declaration', () => {
+    // Unit input, not the frozen fixture. The const-assignment statement
+    // spans lines 8-10 (the whole arrow) with hits 1; the inner return (line
+    // 9) has hits 0. istanbul's own line coverage attributes the START line
+    // only, so 8 is covered and 9-10 are not — span-flattening would let a
+    // whole unused function pass (found with the landing-page probe).
     const reportJson = {
       '/repo/src/x.ts': {
         statementMap: {
           a: { start: { line: 5, column: 2 }, end: { line: 5, column: 20 } },
           b: { start: { line: 8, column: 0 }, end: { line: 10, column: 1 } },
+          c: { start: { line: 9, column: 2 }, end: { line: 9, column: 12 } },
         },
-        s: { a: 0, b: 3 },
+        s: { a: 0, b: 3, c: 0 },
         fnMap: {},
         f: {},
         branchMap: {},
@@ -205,7 +211,9 @@ describe('readCoverageReport over real frozen reports', () => {
     const entry = report.get('src/x.ts')
     expect(entry?.executable.has(5)).toBe(true)
     expect(entry?.covered.has(5)).toBe(false)
-    expect([8, 9, 10].every((l) => entry?.covered.has(l))).toBe(true)
+    expect(entry?.covered.has(8)).toBe(true)
+    expect(entry?.covered.has(9)).toBe(false) // never executed, despite sitting inside a covered span
+    expect(entry?.executable.has(10)).toBe(false) // the closing line starts nothing
   })
 
   it('an empty report throws; a report that is neither format throws', () => {

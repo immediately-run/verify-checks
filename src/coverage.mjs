@@ -57,22 +57,24 @@ export function readLcov(text, { cwd = process.cwd() } = {}) {
 
 // istanbul coverage-final.json: { <file>: { statementMap, s, fnMap, f, branchMap, b } }.
 // A location is executable by virtue of being mapped; covered when its hit
-// count is > 0. Every line a location spans joins the corresponding set.
+// count is > 0. A location contributes its START LINE ONLY — istanbul's own
+// line coverage (getLineCoverage) works this way, and it matters: a
+// never-called arrow function is one executed DECLARATION statement spanning
+// the whole body, so span-flattening would paint the unexecuted body as
+// covered and the #59-shaped probe of a whole unused function would pass.
 export function readIstanbulCoverage(json, { cwd = process.cwd() } = {}) {
   const report = new Map()
   for (const [file, data] of Object.entries(json)) {
     const entry = record(report, file, cwd)
     const mark = (loc, hits) => {
       if (!loc?.start?.line) return
-      const end = loc.end?.line ?? loc.start.line
-      for (let l = loc.start.line; l <= end; l += 1) {
-        entry.executable.add(l)
-        if (hits > 0) entry.covered.add(l)
-      }
+      entry.executable.add(loc.start.line)
+      if (hits > 0) entry.covered.add(loc.start.line)
     }
     for (const [id, loc] of Object.entries(data.statementMap ?? {})) mark(loc, data.s?.[id])
     for (const [id, fn] of Object.entries(data.fnMap ?? {})) mark(fn.decl ?? fn.loc, data.f?.[id])
     for (const [id, branch] of Object.entries(data.branchMap ?? {})) {
+      mark(branch.loc, undefined) // the branch's own loc is executable; hits live per-arm below
       ;(branch.locations ?? []).forEach((loc, i) => mark(loc, data.b?.[id]?.[i]))
     }
   }
