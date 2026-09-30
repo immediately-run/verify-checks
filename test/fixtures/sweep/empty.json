@@ -1,0 +1,7 @@
+{
+  "_comment": "The controls selector matched nothing — a broken selector must turn the sweep red, never silently green (R3-674).",
+  "viewport": { "w": 390, "h": 844 },
+  "document": { "scrollWidth": 390, "clientWidth": 390 },
+  "controls": [],
+  "overlays": []
+}

@@ -1,0 +1,24 @@
+{
+  "_comment": "Modelled on R3-748/R3-750 ('Sign / in', 'Make / an / app'): a 150x52 control on a 17px line-height is a one-line label forced onto two lines. The 150x30 control with the same metrics is fine — padding is in the budget.",
+  "viewport": { "w": 390, "h": 844 },
+  "document": { "scrollWidth": 390, "clientWidth": 390 },
+  "controls": [
+    {
+      "id": "signin",
+      "rect": { "x": 16, "y": 8, "width": 150, "height": 52 },
+      "hitSelf": true,
+      "lineHeight": 17,
+      "paddingBlock": 12,
+      "borderBlock": 1
+    },
+    {
+      "id": "fine",
+      "rect": { "x": 16, "y": 80, "width": 150, "height": 30 },
+      "hitSelf": true,
+      "lineHeight": 17,
+      "paddingBlock": 12,
+      "borderBlock": 1
+    }
+  ],
+  "overlays": []
+}

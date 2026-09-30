@@ -1,0 +1,16 @@
+{
+  "_comment": "Modelled on R3-738: a region paints over the header — the menu button's centre hits .region__progress, not the button (hitSelf false).",
+  "viewport": { "w": 390, "h": 844 },
+  "document": { "scrollWidth": 390, "clientWidth": 390 },
+  "controls": [
+    {
+      "id": "menu-button",
+      "rect": { "x": 342, "y": 4, "width": 44, "height": 44 },
+      "hitSelf": false,
+      "lineHeight": 20,
+      "paddingBlock": 26,
+      "borderBlock": 0
+    }
+  ],
+  "overlays": []
+}

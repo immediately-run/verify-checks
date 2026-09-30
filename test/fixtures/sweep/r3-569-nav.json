@@ -1,0 +1,16 @@
+{
+  "_comment": "Modelled on R3-569: the nav is wider than the 390px phone viewport. Document scrolls sideways, and the burger control's box extends past the right edge.",
+  "viewport": { "w": 390, "h": 844 },
+  "document": { "scrollWidth": 430, "clientWidth": 390 },
+  "controls": [
+    {
+      "id": "burger",
+      "rect": { "x": 380, "y": 8, "width": 48, "height": 48 },
+      "hitSelf": true,
+      "lineHeight": 20,
+      "paddingBlock": 28,
+      "borderBlock": 0
+    }
+  ],
+  "overlays": []
+}

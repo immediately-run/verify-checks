@@ -1,0 +1,15 @@
+{
+  "_comment": "Modelled on R3-739's present menu opening top-left under a top-right tab: the overlay at x = 20 shares no horizontal span with its trigger at x = 1880 (R-IX-1).",
+  "viewport": { "w": 1920, "h": 1080 },
+  "document": { "scrollWidth": 1920, "clientWidth": 1920 },
+  "controls": [],
+  "overlays": [
+    {
+      "id": "present-menu",
+      "rect": { "x": 20, "y": 44, "width": 200, "height": 300 },
+      "visibleRect": { "x": 20, "y": 44, "width": 200, "height": 300 },
+      "triggerId": "top-right-tab",
+      "triggerRect": { "x": 1880, "y": 0, "width": 60, "height": 40 }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "_comment": "Modelled on R3-739: the open menu's box starts at x = -60, off the left edge. Its trigger overlaps it horizontally, so only overlay-offscreen fires.",
+  "viewport": { "w": 1280, "h": 800 },
+  "document": { "scrollWidth": 1280, "clientWidth": 1280 },
+  "controls": [],
+  "overlays": [
+    {
+      "id": "present-menu",
+      "rect": { "x": -60, "y": 44, "width": 300, "height": 400 },
+      "visibleRect": { "x": -60, "y": 44, "width": 300, "height": 400 },
+      "triggerId": "present-tab",
+      "triggerRect": { "x": 0, "y": 0, "width": 100, "height": 40 }
+    }
+  ]
+}

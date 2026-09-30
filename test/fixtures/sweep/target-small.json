@@ -1,0 +1,16 @@
+{
+  "_comment": "A 40x40 control: under MOBILE_SUPPORT's 44px floor, over WCAG 2.5.8's 24px floor.",
+  "viewport": { "w": 390, "h": 844 },
+  "document": { "scrollWidth": 390, "clientWidth": 390 },
+  "controls": [
+    {
+      "id": "tiny-button",
+      "rect": { "x": 10, "y": 10, "width": 40, "height": 40 },
+      "hitSelf": true,
+      "lineHeight": 20,
+      "paddingBlock": 10,
+      "borderBlock": 0
+    }
+  ],
+  "overlays": []
+}
