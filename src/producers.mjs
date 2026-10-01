@@ -60,16 +60,20 @@ export function runJscpd({ patterns, ignore = [], minLines = 6, minTokens = 50, 
     // literal paths (a glob scanned zero files — the vacuous gate R3-641's
     // fault injection found), and --pattern is single-use in 5.1.2
     // ('cannot be used multiple times'), so multi-glob consumers would crash.
-    // Expansion throws on zero matched files — the gate must fail loudly on
-    // a typo'd pattern, never pass on an empty scan.
+    // Expansion is PER PATTERN and throws on the one that matched nothing —
+    // unioning first would let a typo'd glob silently narrow a multi-glob
+    // scan (review round 2): the gate must fail loudly on a bad pattern,
+    // never pass on an empty scan.
     const fastGlob = createRequire(import.meta.url)('fast-glob') // lazy: see the header note
-    const files = fastGlob.sync(patterns, { cwd, onlyFiles: true }).sort()
-    if (files.length === 0) {
-      throw new Error(
-        `runJscpd: the patterns matched zero files (${patterns.join(', ')}; cwd ${cwd}) — ` +
-          'a scan that reads nothing is not a scan',
-      )
+    const files = []
+    for (const pattern of patterns) {
+      const matched = fastGlob.sync(pattern, { cwd, onlyFiles: true })
+      if (matched.length === 0) {
+        throw new Error(`runJscpd: the pattern matched zero files (${JSON.stringify(pattern)}; cwd ${cwd}) — a scan that reads nothing is not a scan`)
+      }
+      files.push(...matched)
     }
+    files.sort()
     const args = [
       '--no-install',
       'jscpd',
