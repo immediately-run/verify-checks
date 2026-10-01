@@ -34,8 +34,11 @@ describe('diffAgainstBaseline', () => {
 // object shaped like what we believe jscpd emits.
 describe('runJscpd (real producer)', () => {
   it('reports the duplicated fixture function and its fragments feed the ratchet', { timeout: 180_000 }, () => {
+    // The consumer shape is GLOBS (all five repos) — the literal-directory
+    // positional that used to make this test pass is exactly what masked
+    // R3-674's vacuity.
     const report = runJscpd({
-      patterns: ['test/fixtures/clones'],
+      patterns: ['test/fixtures/clones/**'],
       cwd: REPO_ROOT,
     })
     const fragments = cloneFragments(report)
@@ -46,6 +49,62 @@ describe('runJscpd (real producer)', () => {
     const { new: fresh, stale } = diffAgainstBaseline(found, [])
     expect(fresh).toEqual([...found].sort())
     expect(stale).toEqual([])
+  })
+
+  // R3-674: the fault injection that found the vacuity. Consumers pass GLOBS,
+  // and jscpd 5.x reads positional arguments as literal paths — so the glob
+  // scanned zero files and the gate could not fail. The case below passes a
+  // glob through the consumer shape; the planted clone must be found.
+  it('a glob pattern actually scans (the vacuity regression)', { timeout: 180_000 }, () => {
+    const report = runJscpd({
+      patterns: ['test/fixtures/clones/**/*.{js,ts}'],
+      cwd: REPO_ROOT,
+    })
+    const fragments = cloneFragments(report)
+    expect(fragments.some((fragment) => fragment.includes('formatTileLabel'))).toBe(true)
+  })
+
+  // The multi-glob consumer shape (site-main, landing-page, sandbox pass two):
+  // jscpd 5.1.2's --pattern is single-use, so globs are expanded by fast-glob
+  // and files go positionally — one invocation, cross-pattern clones found.
+  // The second glob matches the sibling.mjs + twin.mjs PAIR, whose clone exists
+  // ONLY among the second pattern's files — masking that glob loses a reported
+  // clone, which is what makes the test load-bearing (review round 3).
+  it('multiple globs resolve into one scan (the two-glob consumer shape)', { timeout: 180_000 }, () => {
+    const report = runJscpd({
+      patterns: ['test/fixtures/clones/**/*.ts', 'test/fixtures/clones/**/*.mjs'],
+      cwd: REPO_ROOT,
+    })
+    const fragments = cloneFragments(report)
+    expect(fragments.some((fragment) => fragment.includes('formatTileLabel'))).toBe(true)
+    expect(fragments.some((fragment) => fragment.includes('renderSiblingCaption'))).toBe(true)
+  })
+
+  it('a pattern matching zero files throws — a scan that reads nothing is not a scan', () => {
+    expect(() => runJscpd({ patterns: ['test/fixtures/clones/**/*.never'], cwd: REPO_ROOT })).toThrow(
+      /matched zero files/,
+    )
+  })
+
+  it('one typoed glob in a multi-glob call throws, naming THAT pattern (the union does not mask it)', () => {
+    expect(() =>
+      runJscpd({ patterns: ['test/fixtures/clones/**/*.ts', 'test/fixtures/clones/**/*.typo'], cwd: REPO_ROOT }),
+    ).toThrow(/test\/fixtures\/clones\/\*\*\/\*\.typo/)
+  })
+
+  it('overlapping patterns do not produce a spurious self-clone (the expansion dedupes)', { timeout: 180_000 }, () => {
+    // jscpd 5.1.2 reports file↔itself as a clone when handed a file twice —
+    // so the same file reaching the scan via two overlapping patterns would
+    // be a false red gate (review round 3).
+    const report = runJscpd({
+      patterns: ['test/fixtures/clones/**/*.ts', 'test/fixtures/clones/**'],
+      cwd: REPO_ROOT,
+    })
+    const fragments = cloneFragments(report)
+    expect(fragments.some((fragment) => fragment.includes('formatTileLabel'))).toBe(true)
+    for (const dup of report.duplicates ?? []) {
+      expect(dup.firstFile.name).not.toBe(dup.secondFile.name)
+    }
   })
 })
 

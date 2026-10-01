@@ -1,4 +1,9 @@
 import { execFileSync } from 'node:child_process'
+// NOTE: no top-level dependency imports in this module — scripts/
+// check-publish-version.mjs imports changedSince from here and runs BEFORE
+// npm ci in CI, so every dep must resolve lazily at call time (jscpd/knip run
+// through npx for the same reason).
+import { createRequire } from 'node:module'
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -49,10 +54,34 @@ function fileReadable(path) {
 export function runJscpd({ patterns, ignore = [], minLines = 6, minTokens = 50, cwd = process.cwd() }) {
   const outDir = mkdtempSync(join(tmpdir(), 'verify-checks-jscpd-'))
   try {
+    // R3-674: the caller's globs are expanded HERE (fast-glob, already a
+    // dependency) and the resolved files go to jscpd as positional paths.
+    // jscpd 5.x cannot take the globs itself: positionally it reads them as
+    // literal paths (a glob scanned zero files — the vacuous gate R3-641's
+    // fault injection found), and --pattern is single-use in 5.1.2
+    // ('cannot be used multiple times'), so multi-glob consumers would crash.
+    // Expansion is PER PATTERN and throws on the one that matched nothing —
+    // unioning first would let a typo'd glob silently narrow a multi-glob
+    // scan (review round 2): the gate must fail loudly on a bad pattern,
+    // never pass on an empty scan.
+    const fastGlob = createRequire(import.meta.url)('fast-glob') // lazy: see the header note
+    const files = []
+    for (const pattern of patterns) {
+      const matched = fastGlob.sync(pattern, { cwd, onlyFiles: true })
+      if (matched.length === 0) {
+        throw new Error(`runJscpd: the pattern matched zero files (${JSON.stringify(pattern)}; cwd ${cwd}) — a scan that reads nothing is not a scan`)
+      }
+      files.push(...matched)
+    }
+    // Dedupe: overlapping patterns would hand jscpd the same file twice, and
+    // jscpd reports a spurious self-clone (file ↔ itself) for it (review
+    // round 3, verified on 5.1.2).
+    const unique = [...new Set(files)]
+    unique.sort()
     const args = [
       '--no-install',
       'jscpd',
-      ...patterns,
+      ...unique,
       '--reporters',
       'json',
       '--output',
