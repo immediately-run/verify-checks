@@ -73,11 +73,15 @@ export function runJscpd({ patterns, ignore = [], minLines = 6, minTokens = 50, 
       }
       files.push(...matched)
     }
-    files.sort()
+    // Dedupe: overlapping patterns would hand jscpd the same file twice, and
+    // jscpd reports a spurious self-clone (file ↔ itself) for it (review
+    // round 3, verified on 5.1.2).
+    const unique = [...new Set(files)]
+    unique.sort()
     const args = [
       '--no-install',
       'jscpd',
-      ...files,
+      ...unique,
       '--reporters',
       'json',
       '--output',
