@@ -1,5 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import fastGlob from 'fast-glob'
+// NOTE: no top-level dependency imports in this module — scripts/
+// check-publish-version.mjs imports changedSince from here and runs BEFORE
+// npm ci in CI, so every dep must resolve lazily at call time (jscpd/knip run
+// through npx for the same reason).
+import { createRequire } from 'node:module'
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -58,6 +62,7 @@ export function runJscpd({ patterns, ignore = [], minLines = 6, minTokens = 50, 
     // ('cannot be used multiple times'), so multi-glob consumers would crash.
     // Expansion throws on zero matched files — the gate must fail loudly on
     // a typo'd pattern, never pass on an empty scan.
+    const fastGlob = createRequire(import.meta.url)('fast-glob') // lazy: see the header note
     const files = fastGlob.sync(patterns, { cwd, onlyFiles: true }).sort()
     if (files.length === 0) {
       throw new Error(
