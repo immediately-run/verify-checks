@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import fastGlob from 'fast-glob'
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -49,15 +50,25 @@ function fileReadable(path) {
 export function runJscpd({ patterns, ignore = [], minLines = 6, minTokens = 50, cwd = process.cwd() }) {
   const outDir = mkdtempSync(join(tmpdir(), 'verify-checks-jscpd-'))
   try {
-    // R3-674: patterns go through -p/--pattern, NOT positionally — jscpd 5.x
-    // treats positional arguments as literal PATHS, so a glob scanned zero
-    // files and check:clones passed vacuously in every consumer. (A bare
-    // directory positional happens to work — which is exactly why the old
-    // fixture test, which passed one, never saw this.)
+    // R3-674: the caller's globs are expanded HERE (fast-glob, already a
+    // dependency) and the resolved files go to jscpd as positional paths.
+    // jscpd 5.x cannot take the globs itself: positionally it reads them as
+    // literal paths (a glob scanned zero files — the vacuous gate R3-641's
+    // fault injection found), and --pattern is single-use in 5.1.2
+    // ('cannot be used multiple times'), so multi-glob consumers would crash.
+    // Expansion throws on zero matched files — the gate must fail loudly on
+    // a typo'd pattern, never pass on an empty scan.
+    const files = fastGlob.sync(patterns, { cwd, onlyFiles: true }).sort()
+    if (files.length === 0) {
+      throw new Error(
+        `runJscpd: the patterns matched zero files (${patterns.join(', ')}; cwd ${cwd}) — ` +
+          'a scan that reads nothing is not a scan',
+      )
+    }
     const args = [
       '--no-install',
       'jscpd',
-      ...patterns.flatMap((pattern) => ['--pattern', pattern]),
+      ...files,
       '--reporters',
       'json',
       '--output',

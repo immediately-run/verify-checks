@@ -63,6 +63,24 @@ describe('runJscpd (real producer)', () => {
     const fragments = cloneFragments(report)
     expect(fragments.some((fragment) => fragment.includes('formatTileLabel'))).toBe(true)
   })
+
+  // The multi-glob consumer shape (site-main, landing-page, sandbox pass two):
+  // jscpd 5.1.2's --pattern is single-use, so globs are expanded by fast-glob
+  // and files go positionally — one invocation, cross-pattern clones found.
+  it('multiple globs resolve into one scan (the two-glob consumer shape)', { timeout: 180_000 }, () => {
+    const report = runJscpd({
+      patterns: ['test/fixtures/clones/**/*.ts', 'test/fixtures/clones/**/*.js'],
+      cwd: REPO_ROOT,
+    })
+    const fragments = cloneFragments(report)
+    expect(fragments.some((fragment) => fragment.includes('formatTileLabel'))).toBe(true)
+  })
+
+  it('a pattern matching zero files throws — a scan that reads nothing is not a scan', () => {
+    expect(() => runJscpd({ patterns: ['test/fixtures/clones/**/*.never'], cwd: REPO_ROOT })).toThrow(
+      /matched zero files/,
+    )
+  })
 })
 
 describe('untestedFiles', () => {
