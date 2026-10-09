@@ -182,7 +182,7 @@ describe('changedSince + commitTrailers (real git)', () => {
       // the deletion is not listed: a deleted file owes nobody a test
       expect(changed).not.toContain('lib-gone-file.ts')
       expect(commitTrailers('main', dir)).toEqual([
-        { file: 'lib-logic-file.ts', reason: 'no runner in this fixture' },
+        { file: 'lib-logic-file.ts', reason: 'no runner in this fixture', sep: '--' },
       ])
     } finally {
       rmSync(dir, { recursive: true, force: true })

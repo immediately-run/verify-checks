@@ -10,17 +10,17 @@
 // `gh pr view --json body -q .body > body.md` and `gh pr edit --body-file`.
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { commitTrailers, mergeBase } from '../src/producers.mjs'
+import { changedSince, commitTrailers, mergeBase } from '../src/producers.mjs'
 import {
   addedTestTitles,
   blockDiff,
   gitShow,
   loadTypescript,
+  renameMap,
   renderBlock,
   spliceBlock,
 } from '../src/pr-facts.mjs'
 import { execFileSync } from 'node:child_process'
-import { join } from 'node:path'
 
 function fail(message) {
   process.stderr.write(`pr-facts: ${message}\n`)
@@ -39,18 +39,21 @@ if ((mode === '--splice' || mode === '--check') && args.length !== 2) {
 const cwd = process.cwd()
 const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim()
 const mb = mergeBase('origin/main', cwd)
-const changed = execFileSync('git', ['diff', '--name-only', '-z', '--diff-filter=ACMRT', `${mb}..HEAD`], { cwd, encoding: 'utf8' })
-  .split('\0')
-  .map((line) => line.trim())
-  .filter(Boolean)
+const changed = changedSince('origin/main', cwd)
 const testFiles = changed.filter((path) => /\.(test|spec)\.[jt]sx?$/.test(path))
 
 // typescript resolves from the target repo, and only when a test file changed:
 // a PR that touches no tests must not demand the compiler be installed.
 const ts = testFiles.length > 0 ? loadTypescript(cwd) : null
+const renames = renameMap('origin/main', cwd)
 const tests = []
 for (const file of testFiles) {
-  const titles = addedTestTitles(gitShow(mb, file, cwd), readFileSync(join(cwd, file), 'utf8'), file, ts)
+  // Both sides come from git, never the working tree: the block is stamped
+  // with the HEAD SHA, so its facts must be the head commit's — dirty-tree
+  // bytes would silently change facts attributed to a commit that lacks them.
+  // The base reads the rename's OLD path (renameMap); --diff-filter=ACMRT
+  // reports only the new one.
+  const titles = addedTestTitles(gitShow(mb, renames.get(file) ?? file, cwd), gitShow('HEAD', file, cwd), file, ts)
   if (titles.length > 0) tests.push({ file, titles })
 }
 

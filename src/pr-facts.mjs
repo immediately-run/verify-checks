@@ -6,6 +6,7 @@
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
+import { mergeBase } from './producers.mjs'
 
 export const BLOCK_BEGIN_PREFIX = '<!-- pr-facts:begin head='
 export const BLOCK_END = '<!-- pr-facts:end -->'
@@ -54,8 +55,9 @@ export function testTitles(sourceText, fileName, ts) {
       // Unwrap the callee chain: it.each([…])('title', fn) nests the real
       // argument list on the OUTER call, with callee `it.each([…])`.
       let callee = node.expression
-      while (ts.isCallExpression(callee)) callee = callee.expression
-      if (ts.isPropertyAccessExpression(callee)) callee = callee.expression
+      // Loops, not single steps: describe.skip.each([[…]])('t', fn) nests a
+      // call AND two property accesses above the identifier.
+      while (ts.isCallExpression(callee) || ts.isPropertyAccessExpression(callee)) callee = callee.expression
       if (intermediate) callee = null
       if (callee && ts.isIdentifier(callee)) {
         const name = callee.text
@@ -100,7 +102,7 @@ export function renderBlock({ head, tests, trailers }) {
   if (trailers.length === 0) {
     lines.push('(none)')
   } else {
-    for (const { file, reason } of trailers) lines.push(`- \`Untested: ${file} — ${reason}\``)
+    for (const { file, reason, sep } of trailers) lines.push(`- \`Untested: ${file} ${sep ?? '—'} ${reason}\``)
   }
   lines.push('', BLOCK_END)
   return lines.join('\n')
@@ -146,11 +148,33 @@ export function blockDiff(body, block) {
 }
 
 // The git wiring the bin needs, kept here so the bin stays argv+I/O. Base
-// source reads as empty when the file is new.
+// source reads as empty ONLY when the path is not in the base tree (a new
+// file); any other git failure is rethrown — a catch-all would map a real
+// error to "file is new" and report every pre-existing title as added.
 export function gitShow(ref, path, cwd) {
   try {
     return execFileSync('git', ['show', `${ref}:${path}`], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-  } catch {
-    return ''
+  } catch (err) {
+    const stderr = `${err.stderr ?? ''}`
+    if (/does not exist|exists on disk, but not in/i.test(stderr)) return ''
+    throw err
   }
+}
+
+// Rename map for the base read: --diff-filter=ACMRT (changedSince) reports a
+// rename's NEW path only, so `git show <base>:<new-path>` reads empty and
+// every pre-existing title would count as added. `git diff --name-status -M`
+// carries the old path; the bin looks it up before reading the base.
+export function renameMap(base, cwd) {
+  const mb = mergeBase(base, cwd)
+  const out = execFileSync('git', ['diff', '--name-status', '-z', '-M', `${mb}..HEAD`], { cwd, encoding: 'utf8' })
+  const fields = out.split('\0').filter(Boolean)
+  const map = new Map()
+  for (let i = 0; i < fields.length; i += 1) {
+    if (fields[i].startsWith('R')) {
+      map.set(fields[i + 2], fields[i + 1])
+      i += 2
+    }
+  }
+  return map
 }

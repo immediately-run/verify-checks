@@ -68,6 +68,11 @@ describe('addedTestTitles', () => {
     expect(addedTestTitles('', source, 'x.test.ts', ts)).toEqual(['a › one', 'a › two'])
   })
 
+  it('unwraps chained members: describe.skip.each keeps its prefix, it.only.each keeps its title', () => {
+    const source = `describe.skip.each([[1]])('suite %s', () => { it('inner', () => {}) })\nit.only.each([[1]])('only each %s', () => {})`
+    expect(addedTestTitles('', source, 'x.test.ts', ts)).toEqual(['suite %s › inner', 'only each %s'])
+  })
+
   it('counts a renamed test as added', () => {
     expect(addedTestTitles(`it('old', () => {})`, `it('new', () => {})`, 'x.test.ts', ts)).toEqual(['new'])
   })
@@ -170,9 +175,15 @@ describe('the remaining error and fallback paths', () => {
     expect(blockDiff(body, BLOCK)).toBe(BLOCK_END)
   })
 
-  it('gitShow reads a missing path as empty', () => {
+  it('gitShow reads a missing path as empty and rethrows any other failure', () => {
     expect(gitShow('HEAD', 'no/such/file.ts', REPO_ROOT)).toBe('')
     expect(gitShow('HEAD', 'package.json', REPO_ROOT)).toContain('"name"')
+    expect(() => gitShow('HEAD', 'package.json', '/tmp')).toThrow()
+  })
+
+  it('renderBlock re-emits a -- trailer separator verbatim', () => {
+    const block = renderBlock({ head: 'abc123', tests: [], trailers: [{ file: 'src/y.ts', reason: 'why', sep: '--' }] })
+    expect(block).toContain('- `Untested: src/y.ts -- why`')
   })
 })
 
@@ -197,5 +208,24 @@ describe('the bin against a temp git repo', () => {
     git(['commit', '-q', '-m', 'work\n\nUntested: src/b.ts — covered by the integration suite'])
     const out = execFileSync(process.execPath, [join(REPO_ROOT, 'bin/pr-facts.mjs')], { cwd: dir, encoding: 'utf8' })
     expect(out).toContain('- `Untested: src/b.ts — covered by the integration suite`')
+  })
+
+  it('reads a renamed test file\'s base from its old path, so pre-existing titles are not "added"', () => {
+    const git = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
+    writeFileSync(join(dir, 'old.test.ts'), `it('pre-existing', () => {})\nit('kept', () => {})\n`)
+    git(['add', 'old.test.ts'])
+    git(['commit', '-q', '-m', 'add a test file'])
+    git(['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+    git(['mv', 'old.test.ts', 'new.test.ts'])
+    git(['commit', '-q', '-m', 'rename it'])
+    // typescript is absent from the temp repo, so stage the 5.x alias as the
+    // target's own install — the same shape as a real consumer repo.
+    mkdirSync(join(dir, 'node_modules'), { recursive: true })
+    symlinkSync(join(REPO_ROOT, 'node_modules/typescript-ast'), join(dir, 'node_modules/typescript'), 'dir')
+    writeFileSync(join(dir, 'package.json'), '{}')
+    const out = execFileSync(process.execPath, [join(REPO_ROOT, 'bin/pr-facts.mjs')], { cwd: dir, encoding: 'utf8' })
+    expect(out).toContain('### Tests added')
+    expect(out).not.toContain('pre-existing')
+    expect(out).not.toContain('kept')
   })
 })
