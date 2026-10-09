@@ -19,8 +19,9 @@ import { fingerprint, ratchet, readBaseline } from './baseline.mjs'
 //
 // A backticked span is a reference when it matches one of three shapes:
 //   path:       contains '/' and ends in a source/doc extension — resolves if
-//               the file exists relative to the repo root or the commenting
-//               file's directory
+//               the file exists relative to the repo root, the commenting
+//               file's directory, or one of the consumer's pathRoots (e.g.
+//               ['src'] for these repos' src-relative citations)
 //   member:     a.b(.c)* — only the LAST segment is checked
 //   identifier: length ≥ 4, camelCase/PascalCase (an internal lower→upper
 //               transition) or SCREAMING_SNAKE with '_' — resolves if it is
@@ -204,9 +205,12 @@ function lineOf(text, offset) {
  * → { findings: [{ file, line, span, kind, fingerprint }], scannedFiles, commentCount }
  * `file` is cwd-relative; `fingerprint` is `${file}|${span}` through fingerprint().
  */
-export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = process.cwd() } = {}) {
+export function findCommentRefFindings({ patterns, ignore = [], allow, pathRoots = [], cwd = process.cwd() } = {}) {
   if (!patterns || patterns.length === 0) {
     throw new Error('check-comment-refs: patterns is required (e.g. ["src/**/*.{ts,tsx}"])')
+  }
+  if (!Array.isArray(pathRoots) || pathRoots.some((r) => typeof r !== 'string')) {
+    throw new Error('check-comment-refs: pathRoots must be an array of strings (e.g. ["src"])')
   }
   const allowed = validateAllow(allow)
   // The scanner is the TARGET repo's TypeScript, never this package's own —
@@ -242,11 +246,17 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = pro
         cited.add(ref.name)
         const resolved =
           ref.kind === 'path'
-            ? // Repo-relative or commenting-file-relative only: an absolute
-              // span must not resolve against the HOST filesystem, or a
-              // baseline seeded on one machine flips on another (round 1).
+            ? // Repo-relative, commenting-file-relative, then the consumer's
+              // pathRoots (e.g. ['src'] — these repos' comments cite
+              // src-relative paths, writing trust/refloor.ts for the file
+              // under src/; review of the site-main wiring sample, R3-1085
+              // exit criterion 4). An absolute span never resolves against
+              // the HOST filesystem, or a baseline seeded on one machine
+              // flips on another (round 1).
               !isAbsolute(span) &&
-              (existsSync(resolve(cwd, span)) || existsSync(resolve(dirname(resolve(cwd, file)), span)))
+              (existsSync(resolve(cwd, span)) ||
+                existsSync(resolve(dirname(resolve(cwd, file)), span)) ||
+                pathRoots.some((root) => existsSync(resolve(cwd, root, span))))
             : identifiers.has(ref.name)
         // Object.hasOwn, never `in`: the allow map's prototype chain is not
         // an entry (`toString` in {} is true).
@@ -276,11 +286,11 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = pro
   return { findings, scannedFiles: files.length, commentCount }
 }
 
-export async function checkCommentRefs({ patterns, ignore, allow, baselinePath, cwd = process.cwd() } = {}) {
+export async function checkCommentRefs({ patterns, ignore, allow, pathRoots, baselinePath, cwd = process.cwd() } = {}) {
   if (!baselinePath) {
     throw new Error('check-comment-refs: baselinePath is required (e.g. "verify-baselines/comment-refs.json")')
   }
-  const { findings, scannedFiles, commentCount } = findCommentRefFindings({ patterns, ignore, allow, cwd })
+  const { findings, scannedFiles, commentCount } = findCommentRefFindings({ patterns, ignore, allow, pathRoots, cwd })
   const baseline = readBaseline(resolve(cwd, baselinePath)) ?? []
   const baselined = new Set(baseline)
   for (const f of findings) {

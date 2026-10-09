@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -40,6 +40,22 @@ describe('findCommentRefFindings over the fixture project', () => {
 
   it('a shell-command span (`node scripts/x.mjs`) is not a path reference', () => {
     expect(classifySpan('node scripts/check-lock-version.mjs')).toBeNull()
+  })
+
+  it('pathRoots resolve a src-relative citation (`trust/refloor.ts` for `src/trust/refloor.ts`)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'comment-refs-roots-'))
+    try {
+      writeFileSync(join(dir, 'a.ts'), '// see `lib/helper.ts` and `lib/gone.ts`\nexport const x = 1\n')
+      mkdirSync(join(dir, 'src/lib'), { recursive: true })
+      writeFileSync(join(dir, 'src/lib/helper.ts'), 'export const h = 1\n')
+      const noRoots = findCommentRefFindings({ patterns: ['a.ts'], cwd: dir })
+      expect(spanSet(noRoots.findings)).toContain('lib/helper.ts')
+      const withRoots = findCommentRefFindings({ patterns: ['a.ts'], pathRoots: ['src'], cwd: dir })
+      expect(spanSet(withRoots.findings)).not.toContain('lib/helper.ts')
+      expect(spanSet(withRoots.findings)).toContain('lib/gone.ts')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('a template literal with a substitution neither hides a comment nor mints identifiers', () => {
@@ -157,6 +173,12 @@ describe('input validation and the ratchet wrapper', () => {
     )
   })
 
+  it('a non-array pathRoots fails with a named error, not a TypeError', () => {
+    expect(() => findCommentRefFindings({ patterns: PATTERNS, pathRoots: 'src' as never, cwd: FIXTURE })).toThrow(
+      'pathRoots must be an array of strings',
+    )
+  })
+
   it('resolveScanner throws when no loader yields a scanner API', () => {
     expect(() => resolveScanner([() => null, () => null])).toThrow('no TypeScript scanner API found')
     expect(resolveScanner([() => null, () => ({ createScanner: () => {} })])).toBeTruthy()
@@ -191,6 +213,18 @@ describe('input validation and the ratchet wrapper', () => {
       process.exitCode = 0
       await checkCommentRefs({ patterns: ['*.ts'], allow: { neverCited: 'x' }, baselinePath: 'baseline.json', cwd: dir })
       expect(process.exitCode).toBe(1)
+
+      // pathRoots through the PUBLIC entry (the round-1 forwarding gap
+      // survived a green suite because only findCommentRefFindings was
+      // driven): a src-relative citation resolves, a missing one still fails.
+      mkdirSync(join(dir, 'src/lib'), { recursive: true })
+      writeFileSync(join(dir, 'src/lib/helper.ts'), 'export const h = 1\n')
+      writeFileSync(join(dir, 'b.ts'), '// see `lib/helper.ts` and `lib/gone.ts`\nexport const y = 1\n')
+      const { findings: rootFindings } = findCommentRefFindings({ patterns: ['b.ts'], pathRoots: ['src'], cwd: dir })
+      writeFileSync(join(dir, 'roots-baseline.json'), JSON.stringify(rootFindings.map((f) => f.fingerprint)))
+      process.exitCode = 0
+      await checkCommentRefs({ patterns: ['b.ts'], pathRoots: ['src'], baselinePath: 'roots-baseline.json', cwd: dir })
+      expect(process.exitCode).toBe(0)
     } finally {
       process.exitCode = prevCode
       rmSync(dir, { recursive: true, force: true })
