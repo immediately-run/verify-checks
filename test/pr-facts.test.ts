@@ -14,6 +14,7 @@ import {
   blockDiff,
   gitShow,
   loadTypescript,
+  renameMap,
   renderBlock,
   spliceBlock,
 } from '../src/pr-facts.mjs'
@@ -184,6 +185,29 @@ describe('the remaining error and fallback paths', () => {
   it('renderBlock re-emits a -- trailer separator verbatim', () => {
     const block = renderBlock({ head: 'abc123', tests: [], trailers: [{ file: 'src/y.ts', reason: 'why', sep: '--' }] })
     expect(block).toContain('- `Untested: src/y.ts -- why`')
+  })
+
+  it('renameMap maps a renamed path to its old path and ignores non-renames', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-facts-rn-'))
+    const git = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
+    try {
+      git(['init', '-q', '-b', 'main'])
+      git(['config', 'user.email', 'test@example.com'])
+      git(['config', 'user.name', 'test'])
+      writeFileSync(join(dir, 'old.test.ts'), `it('x', () => {})\n`)
+      git(['add', 'old.test.ts'])
+      git(['commit', '-q', '-m', 'base'])
+      git(['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+      git(['mv', 'old.test.ts', 'new.test.ts'])
+      writeFileSync(join(dir, 'fresh.ts'), 'export const f = 1\n')
+      git(['add', 'fresh.ts'])
+      git(['commit', '-q', '-m', 'rename + add'])
+      const map = renameMap('origin/main', dir)
+      expect(map.get('new.test.ts')).toBe('old.test.ts')
+      expect(map.has('fresh.ts')).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
