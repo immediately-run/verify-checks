@@ -95,7 +95,10 @@ function isIdentifierShaped(name) {
 
 /** The span's checked name and kind, or null when the span is not a reference. */
 export function classifySpan(span) {
-  if (span.includes('/') && PATH_SPAN.test(span)) return { kind: 'path', name: span }
+  // A path span with a glob or template placeholder (`connectors/*/x.test.ts`,
+  // `config.<host>.json`) names a PATTERN, not a file — never a reference
+  // (the site-main wiring sample, R3-1085 exit criterion 4).
+  if (span.includes('/') && PATH_SPAN.test(span) && !/[*<>{}]/.test(span)) return { kind: 'path', name: span }
   if (MEMBER_SPAN.test(span)) {
     // Only the last segment is checked, and only when it is identifier-shaped:
     // without the predicate, `package.json` / `README.md` / `www.example.com`

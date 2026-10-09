@@ -31,6 +31,13 @@ describe('findCommentRefFindings over the fixture project', () => {
     expect(spanSet(findings)).not.toContain('./existing.ts')
   })
 
+  it('glob and template path spans (`a/*/b.ts`, `config.<host>.json`) name patterns, not files', () => {
+    expect(classifySpan('connectors/*/tokenIsolation.test.ts')).toBeNull()
+    expect(classifySpan('public/tinkerable.config.<host>.json')).toBeNull()
+    expect(classifySpan('src/{a,b}.ts')).toBeNull()
+    expect(classifySpan('./missing-file.ts')).toEqual({ kind: 'path', name: './missing-file.ts' })
+  })
+
   it('`true`, `rw` and `{ ok: false }` are not references', () => {
     expect(classifySpan('true')).toBeNull()
     expect(classifySpan('rw')).toBeNull()
