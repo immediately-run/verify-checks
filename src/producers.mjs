@@ -251,8 +251,8 @@ export function commitTrailers(base, cwd = process.cwd()) {
   const bodies = run('git', ['log', `${mb}..HEAD`, '--format=%B'], cwd)
   const trailers = []
   for (const line of bodies.split('\n')) {
-    const match = line.match(/^Untested:\s+(\S+)\s+(?:—|--)\s+(.+)$/)
-    if (match) trailers.push({ file: match[1], reason: match[2].trim() })
+    const match = line.match(/^Untested:\s+(\S+)\s+(—|--)\s+(.+)$/)
+    if (match) trailers.push({ file: match[1], reason: match[3].trim(), sep: match[2] })
   }
   return trailers
 }

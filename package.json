@@ -1,6 +1,6 @@
 {
   "name": "@immediately-run/verify-checks",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "Deterministic quality checks shared by the immediately.run core repos: clones (jscpd), unused exports (knip), untested logic (git merge-base + Untested trailers; coverage mode: changed lines must be executed), dead CSS, tokens (undeclared var() references and raw colour literals), layout sweep (pure geometry judges over collected boxes). Baselines are fingerprint sets that only shrink.",
   "license": "UNLICENSED",
   "repository": {
@@ -19,10 +19,12 @@
     "./untested": "./src/check-untested.mjs",
     "./dead-css": "./src/check-dead-css.mjs",
     "./tokens": "./src/check-tokens.mjs",
-    "./sweep": "./src/sweep.mjs"
+    "./sweep": "./src/sweep.mjs",
+    "./pr-facts": "./src/pr-facts.mjs"
   },
   "files": [
-    "src"
+    "src",
+    "bin"
   ],
   "scripts": {
     "test": "vitest run",
@@ -40,6 +42,10 @@
     "@types/node": "^24.13.3",
     "@vitest/coverage-v8": "5.0.0",
     "typescript": "7.0.2",
+    "typescript-ast": "npm:typescript@^5.9.3",
     "vitest": "5.0.0"
+  },
+  "bin": {
+    "pr-facts": "./bin/pr-facts.mjs"
   }
 }
