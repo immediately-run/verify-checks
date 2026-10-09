@@ -10,7 +10,7 @@ import { readBaseline } from '../src/baseline.mjs'
 // failing halves; the comments there enumerate which is which).
 
 const FIXTURE = join(__dirname, 'fixtures/comment-refs')
-const PATTERNS = ['src/**/*.ts']
+const PATTERNS = ['src/**/*.ts', 'src/**/*.tsx']
 const ALLOW = { structuredClone: 'DOM global the fixture code never spells' }
 
 const spanSet = (findings: { span: string }[]) => new Set(findings.map((f) => f.span))
@@ -49,6 +49,14 @@ describe('findCommentRefFindings over the fixture project', () => {
     const { findings } = run()
     const inFixture = findings.filter((f) => f.file.endsWith('templateLiteral.ts'))
     expect(inFixture.map((f) => f.span)).toEqual(['deletedHelper'])
+  })
+
+  it('a comment inside an empty JSX expression container ({/* */}) is seen', () => {
+    // test/fixtures/comment-refs/src/templateLiteral.tsx — the round-2
+    // blocking regression: the container owns its comment.
+    const { findings } = run()
+    const inFixture = findings.filter((f) => f.file.endsWith('templateLiteral.tsx'))
+    expect(inFixture.map((f) => f.span)).toEqual(['goneJsxFn'])
   })
 
   it('`true`, `rw` and `{ ok: false }` are not references', () => {

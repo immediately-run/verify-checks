@@ -138,6 +138,19 @@ export function scanFile(ts, text, { scriptKind } = {}) {
     for (const r of ts.getTrailingCommentRanges(text, node.getEnd()) ?? []) {
       comments.set(r.pos, { start: r.pos, end: r.end })
     }
+    // An EMPTY JSX expression container `{/* … */}` owns its comment: it has
+    // no expression child whose trivia would carry it, and the container's
+    // own leading/trailing ranges stop at the braces (round 2, blocking —
+    // the regression fixture is templateLiteral.tsx). Its interior is
+    // trivia BY CONSTRUCTION (an expression would make it non-empty), so
+    // scanning that interior for comment spans is not prose matching.
+    if (ts.isJsxExpression(node) && node.expression === undefined) {
+      const interiorStart = node.getFullStart() + 1
+      const interior = text.slice(interiorStart, node.getEnd() - 1)
+      for (const m of interior.matchAll(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g)) {
+        comments.set(interiorStart + m.index, { start: interiorStart + m.index, end: interiorStart + m.index + m[0].length })
+      }
+    }
     if (ts.isIdentifier(node)) identifiers.add(node.text)
     node.forEachChild(visit)
   }
