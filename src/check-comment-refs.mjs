@@ -19,8 +19,9 @@ import { fingerprint, ratchet, readBaseline } from './baseline.mjs'
 //
 // A backticked span is a reference when it matches one of three shapes:
 //   path:       contains '/' and ends in a source/doc extension — resolves if
-//               the file exists relative to the repo root or the commenting
-//               file's directory
+//               the file exists relative to the repo root, the commenting
+//               file's directory, or one of the consumer's pathRoots (e.g.
+//               ['src'] for these repos' src-relative citations)
 //   member:     a.b(.c)* — only the LAST segment is checked
 //   identifier: length ≥ 4, camelCase/PascalCase (an internal lower→upper
 //               transition) or SCREAMING_SNAKE with '_' — resolves if it is
@@ -282,11 +283,11 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, pathRoots
   return { findings, scannedFiles: files.length, commentCount }
 }
 
-export async function checkCommentRefs({ patterns, ignore, allow, baselinePath, cwd = process.cwd() } = {}) {
+export async function checkCommentRefs({ patterns, ignore, allow, pathRoots, baselinePath, cwd = process.cwd() } = {}) {
   if (!baselinePath) {
     throw new Error('check-comment-refs: baselinePath is required (e.g. "verify-baselines/comment-refs.json")')
   }
-  const { findings, scannedFiles, commentCount } = findCommentRefFindings({ patterns, ignore, allow, cwd })
+  const { findings, scannedFiles, commentCount } = findCommentRefFindings({ patterns, ignore, allow, pathRoots, cwd })
   const baseline = readBaseline(resolve(cwd, baselinePath)) ?? []
   const baselined = new Set(baseline)
   for (const f of findings) {

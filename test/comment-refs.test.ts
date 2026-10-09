@@ -207,6 +207,18 @@ describe('input validation and the ratchet wrapper', () => {
       process.exitCode = 0
       await checkCommentRefs({ patterns: ['*.ts'], allow: { neverCited: 'x' }, baselinePath: 'baseline.json', cwd: dir })
       expect(process.exitCode).toBe(1)
+
+      // pathRoots through the PUBLIC entry (the round-1 forwarding gap
+      // survived a green suite because only findCommentRefFindings was
+      // driven): a src-relative citation resolves, a missing one still fails.
+      mkdirSync(join(dir, 'src/lib'), { recursive: true })
+      writeFileSync(join(dir, 'src/lib/helper.ts'), 'export const h = 1\n')
+      writeFileSync(join(dir, 'b.ts'), '// see `lib/helper.ts` and `lib/gone.ts`\nexport const y = 1\n')
+      const { findings: rootFindings } = findCommentRefFindings({ patterns: ['b.ts'], pathRoots: ['src'], cwd: dir })
+      writeFileSync(join(dir, 'roots-baseline.json'), JSON.stringify(rootFindings.map((f) => f.fingerprint)))
+      process.exitCode = 0
+      await checkCommentRefs({ patterns: ['b.ts'], pathRoots: ['src'], baselinePath: 'roots-baseline.json', cwd: dir })
+      expect(process.exitCode).toBe(0)
     } finally {
       process.exitCode = prevCode
       rmSync(dir, { recursive: true, force: true })
