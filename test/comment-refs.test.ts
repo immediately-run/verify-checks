@@ -173,6 +173,12 @@ describe('input validation and the ratchet wrapper', () => {
     )
   })
 
+  it('a non-array pathRoots fails with a named error, not a TypeError', () => {
+    expect(() => findCommentRefFindings({ patterns: PATTERNS, pathRoots: 'src' as never, cwd: FIXTURE })).toThrow(
+      'pathRoots must be an array of strings',
+    )
+  })
+
   it('resolveScanner throws when no loader yields a scanner API', () => {
     expect(() => resolveScanner([() => null, () => null])).toThrow('no TypeScript scanner API found')
     expect(resolveScanner([() => null, () => ({ createScanner: () => {} })])).toBeTruthy()

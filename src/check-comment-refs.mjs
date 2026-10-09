@@ -209,6 +209,9 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, pathRoots
   if (!patterns || patterns.length === 0) {
     throw new Error('check-comment-refs: patterns is required (e.g. ["src/**/*.{ts,tsx}"])')
   }
+  if (!Array.isArray(pathRoots) || pathRoots.some((r) => typeof r !== 'string')) {
+    throw new Error('check-comment-refs: pathRoots must be an array of strings (e.g. ["src"])')
+  }
   const allowed = validateAllow(allow)
   // The scanner is the TARGET repo's TypeScript, never this package's own —
   // with one carve-out: TypeScript 7 (the native port) ships no JS scanner
