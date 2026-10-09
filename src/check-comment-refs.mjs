@@ -95,7 +95,12 @@ function isIdentifierShaped(name) {
 
 /** The span's checked name and kind, or null when the span is not a reference. */
 export function classifySpan(span) {
-  if (span.includes('/') && PATH_SPAN.test(span)) return { kind: 'path', name: span }
+  // A path span with a glob/template placeholder (`connectors/*/x.test.ts`,
+  // `config.<host>.json`) names a PATTERN, not a file, and one with
+  // whitespace (`node scripts/check-lock-version.mjs`) is a shell command —
+  // never a reference (the site-main wiring sample, R3-1085 exit
+  // criterion 4; the whitespace class is review round 1).
+  if (span.includes('/') && PATH_SPAN.test(span) && !/[*<>{}\s]/.test(span)) return { kind: 'path', name: span }
   if (MEMBER_SPAN.test(span)) {
     // Only the last segment is checked, and only when it is identifier-shaped:
     // without the predicate, `package.json` / `README.md` / `www.example.com`
@@ -113,29 +118,79 @@ export function classifySpan(span) {
   return null
 }
 
-/** One scanner pass over `text`: the comment ranges and the code's identifier
- *  set. String literals are never comments, and an identifier spelled only
- *  inside a comment never lands in the set (the scanner's token kinds are the
- *  whole distinction). */
-export function scanFile(ts, text, { jsx = false } = {}) {
+/** One pass over `text`: the comment ranges and the code's identifier set.
+ *
+ *  COMMENTS come from the TypeScript SCANNER (skipTrivia: false) with the
+ *  parser's half of the template-literal protocol reimplemented: a bare
+ *  scan() desynchronizes on a template WITH a substitution, because only
+ *  the parser knows a `}` ends a substitution and calls
+ *  reScanTemplateToken — without it, comments after such a template are
+ *  silently skipped (round 1, blocking; templateLiteral.ts). The
+ *  substitution-brace stack below is that protocol. (The parse tree's
+ *  getLeading/TrailingCommentRanges is NOT an alternative: it misses
+ *  inline `/* … *\/` between tokens, post-comma comments, and JSX
+ *  expression-container comments — round 2 and round 3, both blocking;
+ *  templateLiteral.tsx and inlineComment.ts.)
+ *
+ *  IDENTIFIERS come from the AST walk (ts.isIdentifier), so property names
+ *  the scanner emits as contextual-keyword kinds (`batch.set`'s `set`)
+ *  count — the identifier set is what member citations resolve against.
+ *
+ *  String literals are never comments, and an identifier spelled only
+ *  inside a comment never lands in the set. One residual hole, accepted:
+ *  a regex literal whose body contains a comment opener (`/*`, `//`) is
+ *  scanned as division tokens without the parser's reScanSlashToken, so a
+ *  comment-looking span inside a regex could read as a comment — no
+ *  consumer repo carries one today; a finding from one is the tell. */
+export function scanFile(ts, text, { scriptKind } = {}) {
+  const kind = scriptKind ?? ts.ScriptKind.TS
   const scanner = ts.createScanner(
     ts.ScriptTarget.Latest,
     /* skipTrivia */ false,
-    jsx ? ts.LanguageVariant.JSX : ts.LanguageVariant.Standard,
+    kind === ts.ScriptKind.TSX || kind === ts.ScriptKind.JSX ? ts.LanguageVariant.JSX : ts.LanguageVariant.Standard,
     text,
   )
-  const comments = [] // { start, end }
-  const identifiers = new Set()
+  const comments = []
+  const templateStack = [] // one entry per open template literal: the brace depth of its current substitution
   let token = scanner.scan()
   while (token !== ts.SyntaxKind.EndOfFileToken) {
     if (token === ts.SyntaxKind.SingleLineCommentTrivia || token === ts.SyntaxKind.MultiLineCommentTrivia) {
       comments.push({ start: scanner.getTokenStart(), end: scanner.getTokenEnd() })
-    } else if (token === ts.SyntaxKind.Identifier) {
-      identifiers.add(scanner.getTokenText())
+    } else if (token === ts.SyntaxKind.TemplateHead) {
+      templateStack.push(0)
+    } else if (token === ts.SyntaxKind.OpenBraceToken && templateStack.length > 0) {
+      templateStack[templateStack.length - 1] += 1
+    } else if (token === ts.SyntaxKind.CloseBraceToken && templateStack.length > 0) {
+      if (templateStack[templateStack.length - 1] > 0) {
+        templateStack[templateStack.length - 1] -= 1
+      } else {
+        // The `}` closes the template's substitution: re-scan it as the
+        // template's continuation. TemplateMiddle opens the next
+        // substitution (the frame stays); TemplateTail ends the literal.
+        token = scanner.reScanTemplateToken()
+        if (token === ts.SyntaxKind.TemplateTail) templateStack.pop()
+        token = scanner.scan()
+        continue
+      }
     }
     token = scanner.scan()
   }
+
+  const identifiers = new Set()
+  const sf = ts.createSourceFile('scanned', text, ts.ScriptTarget.Latest, true, kind)
+  const visit = (node) => {
+    if (ts.isIdentifier(node)) identifiers.add(node.text)
+    node.forEachChild(visit)
+  }
+  visit(sf)
   return { comments, identifiers }
+}
+
+const SCRIPT_KIND_BY_EXTENSION = { '.tsx': 'TSX', '.jsx': 'JSX', '.mjs': 'JS', '.js': 'JS', '.cjs': 'JS' }
+
+function scriptKindOf(ts, file) {
+  const ext = Object.keys(SCRIPT_KIND_BY_EXTENSION).find((e) => file.endsWith(e))
+  return ts.ScriptKind[SCRIPT_KIND_BY_EXTENSION[ext] ?? 'TS']
 }
 
 function lineOf(text, offset) {
@@ -169,7 +224,7 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = pro
   let commentCount = 0
   for (const file of files) {
     const text = readFileSync(resolve(cwd, file), 'utf8')
-    const scanned = scanFile(ts, text, { jsx: /\.[jt]sx$/.test(file) })
+    const scanned = scanFile(ts, text, { scriptKind: scriptKindOf(ts, file) })
     for (const id of scanned.identifiers) identifiers.add(id)
     commentCount += scanned.comments.length
     perFile.push({ file, text, comments: scanned.comments })

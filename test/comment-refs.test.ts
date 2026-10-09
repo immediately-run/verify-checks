@@ -10,7 +10,7 @@ import { readBaseline } from '../src/baseline.mjs'
 // failing halves; the comments there enumerate which is which).
 
 const FIXTURE = join(__dirname, 'fixtures/comment-refs')
-const PATTERNS = ['src/**/*.ts']
+const PATTERNS = ['src/**/*.ts', 'src/**/*.tsx']
 const ALLOW = { structuredClone: 'DOM global the fixture code never spells' }
 
 const spanSet = (findings: { span: string }[]) => new Set(findings.map((f) => f.span))
@@ -29,6 +29,43 @@ describe('findCommentRefFindings over the fixture project', () => {
     const { findings } = run()
     expect(spanSet(findings)).toContain('./missing-file.ts')
     expect(spanSet(findings)).not.toContain('./existing.ts')
+  })
+
+  it('glob and template path spans (`a/*/b.ts`, `config.<host>.json`) name patterns, not files', () => {
+    expect(classifySpan('connectors/*/tokenIsolation.test.ts')).toBeNull()
+    expect(classifySpan('public/tinkerable.config.<host>.json')).toBeNull()
+    expect(classifySpan('scripts/*.test.mjs')).toBeNull() // the sample's real instance: site-main scripts/check-test-roots.mjs
+    expect(classifySpan('./missing-file.ts')).toEqual({ kind: 'path', name: './missing-file.ts' })
+  })
+
+  it('a shell-command span (`node scripts/x.mjs`) is not a path reference', () => {
+    expect(classifySpan('node scripts/check-lock-version.mjs')).toBeNull()
+  })
+
+  it('a template literal with a substitution neither hides a comment nor mints identifiers', () => {
+    // test/fixtures/comment-refs/src/templateLiteral.ts — the round-1
+    // blocking regression: the bare scanner pass skipped the comment and
+    // minted `deletedHelper` as a code identifier.
+    const { findings } = run()
+    const inFixture = findings.filter((f) => f.file.endsWith('templateLiteral.ts'))
+    expect(inFixture.map((f) => f.span)).toEqual(['deletedHelper'])
+  })
+
+  it('a comment inside a JSX expression container (empty or not) is seen', () => {
+    // test/fixtures/comment-refs/src/templateLiteral.tsx — the round-2
+    // (empty container) and round-3 (non-empty container) blocking
+    // regressions.
+    const { findings } = run()
+    const inFixture = findings.filter((f) => f.file.endsWith('templateLiteral.tsx'))
+    expect(inFixture.map((f) => f.span).sort()).toEqual(['goneJsxFn', 'goneJsxNonEmpty'])
+  })
+
+  it('inline, post-comma and trailing comments are all seen', () => {
+    // test/fixtures/comment-refs/src/inlineComment.ts — the round-3
+    // blocking regression.
+    const { findings } = run()
+    const inFixture = findings.filter((f) => f.file.endsWith('inlineComment.ts'))
+    expect(inFixture.map((f) => f.span).sort()).toEqual(['goneInlineHelper', 'gonePreComma', 'goneTrailing'])
   })
 
   it('`true`, `rw` and `{ ok: false }` are not references', () => {
@@ -162,11 +199,12 @@ describe('input validation and the ratchet wrapper', () => {
 })
 
 describe('the check over this repo’s own src/', () => {
-  it('equals the committed baseline exactly', () => {
+  it('equals the committed baseline exactly', async () => {
     const repoRoot = join(__dirname, '..')
+    const { ALLOW, PATTERNS: OWN_PATTERNS } = await import('../scripts/check-comment-refs.mjs')
     const { findings } = findCommentRefFindings({
-      patterns: ['src/**/*.mjs'],
-      allow: {},
+      patterns: OWN_PATTERNS,
+      allow: ALLOW,
       cwd: repoRoot,
     })
     const baseline = readBaseline(join(repoRoot, 'verify-baselines/comment-refs.json')) ?? []
