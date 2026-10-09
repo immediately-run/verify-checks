@@ -74,6 +74,11 @@ describe('addedTestTitles', () => {
     expect(addedTestTitles('', source, 'x.test.ts', ts)).toEqual(['suite %s › inner', 'only each %s'])
   })
 
+  it('unwraps a tagged-template each table: it.each`…` keeps its title', () => {
+    const source = 'it.each`a  b\n1  2`(' + "'tagged %s', () => {})"
+    expect(addedTestTitles('', source, 'x.test.ts', ts)).toEqual(['tagged %s'])
+  })
+
   it('counts a renamed test as added', () => {
     expect(addedTestTitles(`it('old', () => {})`, `it('new', () => {})`, 'x.test.ts', ts)).toEqual(['new'])
   })
@@ -205,6 +210,31 @@ describe('the remaining error and fallback paths', () => {
       const map = renameMap('origin/main', dir)
       expect(map.get('new.test.ts')).toBe('old.test.ts')
       expect(map.has('fresh.ts')).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('renameMap does not misread a path starting with R as a rename status', () => {
+    // review round 2: a root README.md modified beside a rename was parsed as
+    // the rename's status, dropping the real entry.
+    const dir = mkdtempSync(join(tmpdir(), 'pr-facts-rn2-'))
+    const git = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
+    try {
+      git(['init', '-q', '-b', 'main'])
+      git(['config', 'user.email', 'test@example.com'])
+      git(['config', 'user.name', 'test'])
+      writeFileSync(join(dir, 'README.md'), 'one\n')
+      writeFileSync(join(dir, 'old.test.ts'), `it('x', () => {})\n`)
+      git(['add', '.'])
+      git(['commit', '-q', '-m', 'base'])
+      git(['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+      writeFileSync(join(dir, 'README.md'), 'two\n')
+      git(['mv', 'old.test.ts', 'new.test.ts'])
+      git(['commit', '-q', '-am', 'modify README, rename test'])
+      const map = renameMap('origin/main', dir)
+      expect(map.get('new.test.ts')).toBe('old.test.ts')
+      expect(map.size).toBe(1)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

@@ -56,8 +56,15 @@ export function testTitles(sourceText, fileName, ts) {
       // argument list on the OUTER call, with callee `it.each([…])`.
       let callee = node.expression
       // Loops, not single steps: describe.skip.each([[…]])('t', fn) nests a
-      // call AND two property accesses above the identifier.
-      while (ts.isCallExpression(callee) || ts.isPropertyAccessExpression(callee)) callee = callee.expression
+      // call AND two property accesses above the identifier; it.each`…`('t',
+      // fn) nests a tagged template (its tag is the callee chain).
+      while (
+        ts.isCallExpression(callee) ||
+        ts.isPropertyAccessExpression(callee) ||
+        ts.isTaggedTemplateExpression(callee)
+      ) {
+        callee = ts.isTaggedTemplateExpression(callee) ? callee.tag : callee.expression
+      }
       if (intermediate) callee = null
       if (callee && ts.isIdentifier(callee)) {
         const name = callee.text
@@ -153,7 +160,7 @@ export function blockDiff(body, block) {
 // error to "file is new" and report every pre-existing title as added.
 export function gitShow(ref, path, cwd) {
   try {
-    return execFileSync('git', ['show', `${ref}:${path}`], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    return execFileSync('git', ['show', `${ref}:${path}`], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
   } catch (err) {
     const stderr = `${err.stderr ?? ''}`
     if (/does not exist|exists on disk, but not in/i.test(stderr)) return ''
@@ -170,9 +177,15 @@ export function renameMap(base, cwd) {
   const out = execFileSync('git', ['diff', '--name-status', '-z', '-M', `${mb}..HEAD`], { cwd, encoding: 'utf8' })
   const fields = out.split('\0').filter(Boolean)
   const map = new Map()
-  for (let i = 0; i < fields.length; i += 1) {
-    if (fields[i].startsWith('R')) {
-      map.set(fields[i + 2], fields[i + 1])
+  // Walk by ENTRY STRUCTURE, never by testing a field for 'R': a plain path
+  // can start with R (README.md), and reading it as a rename status drops the
+  // real rename that follows (review round 2).
+  for (let i = 0; i < fields.length; ) {
+    const status = fields[i]
+    if (status.startsWith('R') || status.startsWith('C')) {
+      if (status.startsWith('R')) map.set(fields[i + 2], fields[i + 1])
+      i += 3
+    } else {
       i += 2
     }
   }
