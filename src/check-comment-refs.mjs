@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import fastGlob from 'fast-glob'
 import { fingerprint, ratchet, readBaseline } from './baseline.mjs'
 
@@ -87,18 +87,28 @@ export function resolveScanner(loaders) {
   throw new Error('check-comment-refs: no TypeScript scanner API found (the target repo’s typescript is TS 7 and no typescript-ast alias resolves)')
 }
 
+/** The identifier predicate: length ≥ 4, camelCase/PascalCase (an internal
+ *  lower→upper transition) or SCREAMING_SNAKE with '_'. */
+function isIdentifierShaped(name) {
+  return name.length >= 4 && (CAMEL_OR_PASCAL.test(name) || SCREAMING_SNAKE.test(name))
+}
+
 /** The span's checked name and kind, or null when the span is not a reference. */
 export function classifySpan(span) {
   if (span.includes('/') && PATH_SPAN.test(span)) return { kind: 'path', name: span }
   if (MEMBER_SPAN.test(span)) {
+    // Only the last segment is checked, and only when it is identifier-shaped:
+    // without the predicate, `package.json` / `README.md` / `www.example.com`
+    // classify as members whose checked name is the extension or TLD, and the
+    // verdict carries no information about the named file (review round 1).
     const segments = span.replace(/\(\)$/, '').split('.')
-    return { kind: 'identifier', name: segments[segments.length - 1] }
+    const last = segments[segments.length - 1]
+    if (isIdentifierShaped(last)) return { kind: 'identifier', name: last }
+    return null
   }
   if (IDENTIFIER_SPAN.test(span)) {
     const name = span.replace(/\(\)$/, '')
-    if (name.length >= 4 && (CAMEL_OR_PASCAL.test(name) || SCREAMING_SNAKE.test(name))) {
-      return { kind: 'identifier', name }
-    }
+    if (isIdentifierShaped(name)) return { kind: 'identifier', name }
   }
   return null
 }
@@ -177,9 +187,15 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = pro
         cited.add(ref.name)
         const resolved =
           ref.kind === 'path'
-            ? existsSync(resolve(cwd, span)) || existsSync(resolve(dirname(resolve(cwd, file)), span))
+            ? // Repo-relative or commenting-file-relative only: an absolute
+              // span must not resolve against the HOST filesystem, or a
+              // baseline seeded on one machine flips on another (round 1).
+              !isAbsolute(span) &&
+              (existsSync(resolve(cwd, span)) || existsSync(resolve(dirname(resolve(cwd, file)), span)))
             : identifiers.has(ref.name)
-        if (!resolved && !(ref.name in allowed)) {
+        // Object.hasOwn, never `in`: the allow map's prototype chain is not
+        // an entry (`toString` in {} is true).
+        if (!resolved && !Object.hasOwn(allowed, ref.name)) {
           findings.push({
             file,
             line: lineOf(text, start + match.index),

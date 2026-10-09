@@ -37,6 +37,37 @@ describe('findCommentRefFindings over the fixture project', () => {
     expect(classifySpan('{ ok: false }')).toBeNull()
   })
 
+  it('filename- and host-shaped spans (`package.json`, `README.md`, `www.example.com`) are not members', () => {
+    expect(classifySpan('package.json')).toBeNull()
+    expect(classifySpan('README.md')).toBeNull()
+    expect(classifySpan('www.example.com')).toBeNull()
+    expect(classifySpan('obj.missingMember()')).toEqual({ kind: 'identifier', name: 'missingMember' })
+  })
+
+  it('an empty allow map does not auto-allow prototype names (`toString`)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'comment-refs-proto-'))
+    try {
+      writeFileSync(join(dir, 'a.ts'), '// calls `toString` here\nexport const x = 1\n')
+      const { findings } = findCommentRefFindings({ patterns: ['*.ts'], cwd: dir })
+      expect(spanSet(findings)).toContain('toString')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('an absolute span never resolves against the host filesystem', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'comment-refs-abs-'))
+    try {
+      const hostFile = join(dir, 'host.ts')
+      writeFileSync(hostFile, 'export const y = 1\n')
+      writeFileSync(join(dir, 'a.ts'), `// reads \`${hostFile}\` for it\nexport const x = 1\n`)
+      const { findings } = findCommentRefFindings({ patterns: ['a.ts'], cwd: dir })
+      expect(spanSet(findings)).toContain(hostFile)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('`obj.missingMember()` checks only `missingMember`', () => {
     const { findings } = run()
     expect(spanSet(findings)).toContain('obj.missingMember()')
