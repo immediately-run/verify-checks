@@ -34,8 +34,21 @@ describe('findCommentRefFindings over the fixture project', () => {
   it('glob and template path spans (`a/*/b.ts`, `config.<host>.json`) name patterns, not files', () => {
     expect(classifySpan('connectors/*/tokenIsolation.test.ts')).toBeNull()
     expect(classifySpan('public/tinkerable.config.<host>.json')).toBeNull()
-    expect(classifySpan('src/{a,b}.ts')).toBeNull()
+    expect(classifySpan('scripts/*.test.mjs')).toBeNull() // the sample's real instance: site-main scripts/check-test-roots.mjs
     expect(classifySpan('./missing-file.ts')).toEqual({ kind: 'path', name: './missing-file.ts' })
+  })
+
+  it('a shell-command span (`node scripts/x.mjs`) is not a path reference', () => {
+    expect(classifySpan('node scripts/check-lock-version.mjs')).toBeNull()
+  })
+
+  it('a template literal with a substitution neither hides a comment nor mints identifiers', () => {
+    // test/fixtures/comment-refs/src/templateLiteral.ts — the round-1
+    // blocking regression: the bare scanner pass skipped the comment and
+    // minted `deletedHelper` as a code identifier.
+    const { findings } = run()
+    const inFixture = findings.filter((f) => f.file.endsWith('templateLiteral.ts'))
+    expect(inFixture.map((f) => f.span)).toEqual(['deletedHelper'])
   })
 
   it('`true`, `rw` and `{ ok: false }` are not references', () => {
@@ -169,11 +182,12 @@ describe('input validation and the ratchet wrapper', () => {
 })
 
 describe('the check over this repo’s own src/', () => {
-  it('equals the committed baseline exactly', () => {
+  it('equals the committed baseline exactly', async () => {
     const repoRoot = join(__dirname, '..')
+    const { ALLOW, PATTERNS: OWN_PATTERNS } = await import('../scripts/check-comment-refs.mjs')
     const { findings } = findCommentRefFindings({
-      patterns: ['src/**/*.mjs'],
-      allow: {},
+      patterns: OWN_PATTERNS,
+      allow: ALLOW,
       cwd: repoRoot,
     })
     const baseline = readBaseline(join(repoRoot, 'verify-baselines/comment-refs.json')) ?? []

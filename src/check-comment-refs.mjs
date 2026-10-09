@@ -95,10 +95,12 @@ function isIdentifierShaped(name) {
 
 /** The span's checked name and kind, or null when the span is not a reference. */
 export function classifySpan(span) {
-  // A path span with a glob or template placeholder (`connectors/*/x.test.ts`,
-  // `config.<host>.json`) names a PATTERN, not a file — never a reference
-  // (the site-main wiring sample, R3-1085 exit criterion 4).
-  if (span.includes('/') && PATH_SPAN.test(span) && !/[*<>{}]/.test(span)) return { kind: 'path', name: span }
+  // A path span with a glob/template placeholder (`connectors/*/x.test.ts`,
+  // `config.<host>.json`) names a PATTERN, not a file, and one with
+  // whitespace (`node scripts/check-lock-version.mjs`) is a shell command —
+  // never a reference (the site-main wiring sample, R3-1085 exit
+  // criterion 4; the whitespace class is review round 1).
+  if (span.includes('/') && PATH_SPAN.test(span) && !/[*<>{}\s]/.test(span)) return { kind: 'path', name: span }
   if (MEMBER_SPAN.test(span)) {
     // Only the last segment is checked, and only when it is identifier-shaped:
     // without the predicate, `package.json` / `README.md` / `www.example.com`
@@ -116,29 +118,38 @@ export function classifySpan(span) {
   return null
 }
 
-/** One scanner pass over `text`: the comment ranges and the code's identifier
- *  set. String literals are never comments, and an identifier spelled only
- *  inside a comment never lands in the set (the scanner's token kinds are the
- *  whole distinction). */
-export function scanFile(ts, text, { jsx = false } = {}) {
-  const scanner = ts.createScanner(
-    ts.ScriptTarget.Latest,
-    /* skipTrivia */ false,
-    jsx ? ts.LanguageVariant.JSX : ts.LanguageVariant.Standard,
-    text,
-  )
-  const comments = [] // { start, end }
+/** One parse over `text`: the comment ranges and the code's identifier set.
+ *  String literals are never comments, and an identifier spelled only inside
+ *  a comment never lands in the set. This is a real PARSE
+ *  (createSourceFile + getLeading/TrailingCommentRanges), not a bare
+ *  createScanner pass: a parser-free scanner desynchronizes on template
+ *  literals with substitutions, silently skipping comments and minting
+ *  phantom identifiers in roughly half the files of every consumer repo
+ *  (review round 1, blocking — the regression test is the fixture's
+ *  templateLiteral.ts). */
+export function scanFile(ts, text, { scriptKind } = {}) {
+  const sf = ts.createSourceFile('scanned', text, ts.ScriptTarget.Latest, true, scriptKind ?? ts.ScriptKind.TS)
+  const comments = new Map() // start → { start, end }; a comment can be one node's trailing and the next's leading
   const identifiers = new Set()
-  let token = scanner.scan()
-  while (token !== ts.SyntaxKind.EndOfFileToken) {
-    if (token === ts.SyntaxKind.SingleLineCommentTrivia || token === ts.SyntaxKind.MultiLineCommentTrivia) {
-      comments.push({ start: scanner.getTokenStart(), end: scanner.getTokenEnd() })
-    } else if (token === ts.SyntaxKind.Identifier) {
-      identifiers.add(scanner.getTokenText())
+  const visit = (node) => {
+    for (const r of ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []) {
+      comments.set(r.pos, { start: r.pos, end: r.end })
     }
-    token = scanner.scan()
+    for (const r of ts.getTrailingCommentRanges(text, node.getEnd()) ?? []) {
+      comments.set(r.pos, { start: r.pos, end: r.end })
+    }
+    if (ts.isIdentifier(node)) identifiers.add(node.text)
+    node.forEachChild(visit)
   }
-  return { comments, identifiers }
+  visit(sf)
+  return { comments: [...comments.values()].sort((a, b) => a.start - b.start), identifiers }
+}
+
+const SCRIPT_KIND_BY_EXTENSION = { '.tsx': 'TSX', '.jsx': 'JSX', '.mjs': 'JS', '.js': 'JS', '.cjs': 'JS' }
+
+function scriptKindOf(ts, file) {
+  const ext = Object.keys(SCRIPT_KIND_BY_EXTENSION).find((e) => file.endsWith(e))
+  return ts.ScriptKind[SCRIPT_KIND_BY_EXTENSION[ext] ?? 'TS']
 }
 
 function lineOf(text, offset) {
@@ -172,7 +183,7 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = pro
   let commentCount = 0
   for (const file of files) {
     const text = readFileSync(resolve(cwd, file), 'utf8')
-    const scanned = scanFile(ts, text, { jsx: /\.[jt]sx$/.test(file) })
+    const scanned = scanFile(ts, text, { scriptKind: scriptKindOf(ts, file) })
     for (const id of scanned.identifiers) identifiers.add(id)
     commentCount += scanned.comments.length
     perFile.push({ file, text, comments: scanned.comments })
