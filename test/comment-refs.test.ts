@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { classifySpan, findCommentRefFindings, checkCommentRefs } from '../src/check-comment-refs.mjs'
+import { classifySpan, findCommentRefFindings, checkCommentRefs, resolveScanner } from '../src/check-comment-refs.mjs'
 import { readBaseline } from '../src/baseline.mjs'
 
 // R3-1085 — cases for src/check-comment-refs.mjs over the fixture project in
@@ -87,6 +87,11 @@ describe('input validation and the ratchet wrapper', () => {
     expect(() => findCommentRefFindings({ patterns: PATTERNS, allow: { x: '' }, cwd: FIXTURE })).toThrow(
       'needs a non-empty reason',
     )
+  })
+
+  it('resolveScanner throws when no loader yields a scanner API', () => {
+    expect(() => resolveScanner([() => null, () => null])).toThrow('no TypeScript scanner API found')
+    expect(resolveScanner([() => null, () => ({ createScanner: () => {} })])).toBeTruthy()
   })
 
   it('throws when the patterns match zero files', () => {

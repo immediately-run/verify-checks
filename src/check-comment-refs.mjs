@@ -56,6 +56,37 @@ function validateAllow(allow) {
   return allow
 }
 
+/**
+ * The scanner-provider chain, exported for tests: the target repo's
+ * `typescript` first, then its `typescript-ast` alias (TS 7 ships no JS
+ * scanner API), then this package's own alias. Each loader returns the
+ * module or null.
+ */
+export function scannerLoaders(cwd) {
+  const req = createRequire(join(cwd, 'package.json'))
+  const tryLoad = (name, loader) => () => {
+    try {
+      const mod = loader(name)
+      return typeof mod.createScanner === 'function' ? mod : null
+    } catch {
+      return null
+    }
+  }
+  return [
+    tryLoad('typescript', req),
+    tryLoad('typescript-ast', req),
+    tryLoad('typescript-ast', createRequire(import.meta.url)),
+  ]
+}
+
+export function resolveScanner(loaders) {
+  for (const load of loaders) {
+    const mod = load()
+    if (mod) return mod
+  }
+  throw new Error('check-comment-refs: no TypeScript scanner API found (the target repo’s typescript is TS 7 and no typescript-ast alias resolves)')
+}
+
 /** The span's checked name and kind, or null when the span is not a reference. */
 export function classifySpan(span) {
   if (span.includes('/') && PATH_SPAN.test(span)) return { kind: 'path', name: span }
@@ -117,22 +148,7 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = pro
   // with one carve-out: TypeScript 7 (the native port) ships no JS scanner
   // API, so a repo whose `typescript` is v7 (this one) falls back to its
   // `typescript-ast` alias (npm:typescript@^5), which is the same v5 API.
-  const req = createRequire(join(cwd, 'package.json'))
-  const tryLoad = (name, loader) => {
-    try {
-      const mod = loader(name)
-      return typeof mod.createScanner === 'function' ? mod : null
-    } catch {
-      return null
-    }
-  }
-  const ts =
-    tryLoad('typescript', req) ??
-    tryLoad('typescript-ast', req) ??
-    tryLoad('typescript-ast', createRequire(import.meta.url))
-  if (!ts) {
-    throw new Error('check-comment-refs: no TypeScript scanner API found (the target repo’s typescript is TS 7 and no typescript-ast alias resolves)')
-  }
+  const ts = resolveScanner(scannerLoaders(cwd))
   const files = fastGlob.sync(patterns, { cwd, ignore })
   if (files.length === 0) {
     throw new Error(`check-comment-refs: patterns matched zero files (globs: ${patterns.join(', ')}; cwd ${cwd})`)
