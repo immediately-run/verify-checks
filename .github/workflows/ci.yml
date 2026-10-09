@@ -42,6 +42,8 @@ jobs:
       # wrapper runs vitest with coverage itself. fetch-depth: 0 above is
       # what makes origin/main resolvable here.
       - run: npm run check:untested
+      # R3-1085 — the repo self-hosts the comment-refs check on its own src/.
+      - run: npm run check:comment-refs
 
   release:
     needs: test
