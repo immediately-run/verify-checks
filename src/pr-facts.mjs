@@ -136,8 +136,11 @@ export function blockDiff(body, block) {
   if (existing === null) return block.split('\n')[0]
   const a = existing.text.split('\n')
   const b = block.split('\n')
+  // The returned line is always from the FRESH block — what the body should
+  // say. Both blocks end with the END marker, so a length-only difference
+  // still surfaces at a defined b[i] (the marker at the latest).
   for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-    if (a[i] !== b[i]) return b[i] ?? `(block ends; body continues with: ${a[i]})`
+    if (a[i] !== b[i]) return b[i]
   }
   return null
 }

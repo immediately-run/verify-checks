@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -12,6 +12,8 @@ import {
   addedTestTitles,
   beginMarker,
   blockDiff,
+  gitShow,
+  loadTypescript,
   renderBlock,
   spliceBlock,
 } from '../src/pr-facts.mjs'
@@ -120,6 +122,57 @@ describe('renderBlock', () => {
     expect(BLOCK).toContain('- `Untested: src/y.ts — covered by the integration suite`')
     expect(BLOCK.endsWith(BLOCK_END)).toBe(true)
     expect(BLOCK).not.toMatch(/\d+ tests? added/i)
+  })
+})
+
+describe('loadTypescript failure modes', () => {
+  it('names the cause when the target repo has no typescript', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-facts-np-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), '{}')
+      expect(() => loadTypescript(dir)).toThrow(/cannot resolve typescript/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('names the cause when the resolved typescript has no classic API', () => {
+    // This repo's own typescript is 7 native — the real no-createSourceFile case.
+    expect(() => loadTypescript(REPO_ROOT)).toThrow(/no createSourceFile/)
+    // And the same cwd resolves fine through the 5.x alias the tests use.
+    expect(typeof ts.createSourceFile).toBe('function')
+  })
+
+  it('returns the classic API when the target repo carries typescript 5', () => {
+    // A target repo with typescript 5, staged by symlinking the 5.x alias the
+    // tests already carry — a hand-written module would assert nothing.
+    const dir = mkdtempSync(join(tmpdir(), 'pr-facts-ts5-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), '{}')
+      mkdirSync(join(dir, 'node_modules'), { recursive: true })
+      symlinkSync(join(REPO_ROOT, 'node_modules/typescript-ast'), join(dir, 'node_modules/typescript'), 'dir')
+      const loaded = loadTypescript(dir)
+      expect(loaded.version).toBe(ts.version)
+      expect(typeof loaded.createSourceFile).toBe('function')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('the remaining error and fallback paths', () => {
+  it('extractBlock throws on a begin marker with no end', () => {
+    expect(() => spliceBlock(`x\n${beginMarker('abc123')}\nno end`, BLOCK)).toThrow(/no pr-facts:end/)
+  })
+
+  it('blockDiff returns the fresh line where the body block has an extra line', () => {
+    const body = `${BLOCK.replace(BLOCK_END, `extra line\n${BLOCK_END}`)}`
+    expect(blockDiff(body, BLOCK)).toBe(BLOCK_END)
+  })
+
+  it('gitShow reads a missing path as empty', () => {
+    expect(gitShow('HEAD', 'no/such/file.ts', REPO_ROOT)).toBe('')
+    expect(gitShow('HEAD', 'package.json', REPO_ROOT)).toContain('"name"')
   })
 })
 
