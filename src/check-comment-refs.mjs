@@ -204,7 +204,7 @@ function lineOf(text, offset) {
  * → { findings: [{ file, line, span, kind, fingerprint }], scannedFiles, commentCount }
  * `file` is cwd-relative; `fingerprint` is `${file}|${span}` through fingerprint().
  */
-export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = process.cwd() } = {}) {
+export function findCommentRefFindings({ patterns, ignore = [], allow, pathRoots = [], cwd = process.cwd() } = {}) {
   if (!patterns || patterns.length === 0) {
     throw new Error('check-comment-refs: patterns is required (e.g. ["src/**/*.{ts,tsx}"])')
   }
@@ -242,11 +242,17 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = pro
         cited.add(ref.name)
         const resolved =
           ref.kind === 'path'
-            ? // Repo-relative or commenting-file-relative only: an absolute
-              // span must not resolve against the HOST filesystem, or a
-              // baseline seeded on one machine flips on another (round 1).
+            ? // Repo-relative, commenting-file-relative, then the consumer's
+              // pathRoots (e.g. ['src'] — these repos' comments cite
+              // src-relative paths, writing trust/refloor.ts for the file
+              // under src/; review of the site-main wiring sample, R3-1085
+              // exit criterion 4). An absolute span never resolves against
+              // the HOST filesystem, or a baseline seeded on one machine
+              // flips on another (round 1).
               !isAbsolute(span) &&
-              (existsSync(resolve(cwd, span)) || existsSync(resolve(dirname(resolve(cwd, file)), span)))
+              (existsSync(resolve(cwd, span)) ||
+                existsSync(resolve(dirname(resolve(cwd, file)), span)) ||
+                pathRoots.some((root) => existsSync(resolve(cwd, root, span))))
             : identifiers.has(ref.name)
         // Object.hasOwn, never `in`: the allow map's prototype chain is not
         // an entry (`toString` in {} is true).

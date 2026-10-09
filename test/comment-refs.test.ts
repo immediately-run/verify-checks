@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -40,6 +40,22 @@ describe('findCommentRefFindings over the fixture project', () => {
 
   it('a shell-command span (`node scripts/x.mjs`) is not a path reference', () => {
     expect(classifySpan('node scripts/check-lock-version.mjs')).toBeNull()
+  })
+
+  it('pathRoots resolve a src-relative citation (`trust/refloor.ts` for `src/trust/refloor.ts`)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'comment-refs-roots-'))
+    try {
+      writeFileSync(join(dir, 'a.ts'), '// see `lib/helper.ts` and `lib/gone.ts`\nexport const x = 1\n')
+      mkdirSync(join(dir, 'src/lib'), { recursive: true })
+      writeFileSync(join(dir, 'src/lib/helper.ts'), 'export const h = 1\n')
+      const noRoots = findCommentRefFindings({ patterns: ['a.ts'], cwd: dir })
+      expect(spanSet(noRoots.findings)).toContain('lib/helper.ts')
+      const withRoots = findCommentRefFindings({ patterns: ['a.ts'], pathRoots: ['src'], cwd: dir })
+      expect(spanSet(withRoots.findings)).not.toContain('lib/helper.ts')
+      expect(spanSet(withRoots.findings)).toContain('lib/gone.ts')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('a template literal with a substitution neither hides a comment nor mints identifiers', () => {
