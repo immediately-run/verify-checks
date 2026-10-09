@@ -14,6 +14,7 @@ export const ALLOW = {
   nsExports: 'knip JSON reporter class name, cited in src/producers.mjs',
   nsTypes: 'knip JSON reporter class name, cited in src/producers.mjs',
   optionalPeerDependencies: 'knip JSON reporter class name, cited in src/producers.mjs',
+  'src/a.ts': 'illustrative path in src/untested-core.mjs’s globstar comment (`src/**/*.{ts,tsx}` never matches it — that is the point of the sentence)',
 }
 
 export const PATTERNS = ['src/**/*.mjs']

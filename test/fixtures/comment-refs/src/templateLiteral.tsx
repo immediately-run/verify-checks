@@ -3,3 +3,4 @@
 // the leading/trailing-trivia walk never saw it. The container owns it now,
 // and the cited helper is still gone.
 export const C = () => <div>{/* inner `goneJsxFn` */}</div>
+export const D = () => <div>{/* nonEmpty `goneJsxNonEmpty` */ 1}</div>

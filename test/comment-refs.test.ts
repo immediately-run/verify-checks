@@ -51,12 +51,21 @@ describe('findCommentRefFindings over the fixture project', () => {
     expect(inFixture.map((f) => f.span)).toEqual(['deletedHelper'])
   })
 
-  it('a comment inside an empty JSX expression container ({/* */}) is seen', () => {
+  it('a comment inside a JSX expression container (empty or not) is seen', () => {
     // test/fixtures/comment-refs/src/templateLiteral.tsx — the round-2
-    // blocking regression: the container owns its comment.
+    // (empty container) and round-3 (non-empty container) blocking
+    // regressions.
     const { findings } = run()
     const inFixture = findings.filter((f) => f.file.endsWith('templateLiteral.tsx'))
-    expect(inFixture.map((f) => f.span)).toEqual(['goneJsxFn'])
+    expect(inFixture.map((f) => f.span).sort()).toEqual(['goneJsxFn', 'goneJsxNonEmpty'])
+  })
+
+  it('inline, post-comma and trailing comments are all seen', () => {
+    // test/fixtures/comment-refs/src/inlineComment.ts — the round-3
+    // blocking regression.
+    const { findings } = run()
+    const inFixture = findings.filter((f) => f.file.endsWith('inlineComment.ts'))
+    expect(inFixture.map((f) => f.span).sort()).toEqual(['goneInlineHelper', 'gonePreComma', 'goneTrailing'])
   })
 
   it('`true`, `rw` and `{ ok: false }` are not references', () => {
