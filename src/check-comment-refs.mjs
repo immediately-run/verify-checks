@@ -1,0 +1,209 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
+import fastGlob from 'fast-glob'
+import { fingerprint, ratchet, readBaseline } from './baseline.mjs'
+
+// check-comment-refs — a backticked span in a comment that names a symbol or
+// path must name one that EXISTS (R3-1085; implementation_standards R7's
+// mechanical half: "the next reader trusts it", and the next reader is
+// usually an agent taking the comment as instruction).
+//
+// Comments are found by the TypeScript SCANNER, not a regex over source
+// (R12): ts.createScanner with skipTrivia:false yields the comment trivia
+// ranges, and the same pass collects every Identifier token's text into the
+// repo's identifier set — one pass per file. The scanner is resolved from the
+// TARGET repo (createRequire on cwd's package.json), never from this
+// package's own node_modules. Matching backticks INSIDE comment text is prose
+// matching, which R12 does not govern.
+//
+// A backticked span is a reference when it matches one of three shapes:
+//   path:       contains '/' and ends in a source/doc extension — resolves if
+//               the file exists relative to the repo root or the commenting
+//               file's directory
+//   member:     a.b(.c)* — only the LAST segment is checked
+//   identifier: length ≥ 4, camelCase/PascalCase (an internal lower→upper
+//               transition) or SCREAMING_SNAKE with '_' — resolves if it is
+//               in the scanned identifier set
+// Everything else (`true`, `rw`, `{ ok: false }`, shell commands) is not a
+// reference: the false-positive rate is what decides whether agents trust the
+// check, and those shapes are rarely symbols. External names a comment
+// legitimately cites but the code never spells go in the consumer's `allow`
+// map ({ name: reason }); a stale allow entry — one no comment cites — is
+// itself a finding, as in check-tokens.
+//
+// Fingerprints are `${file}|${span}` through fingerprint() — no line number,
+// so moving a stale comment does not change its identity — ratcheted against
+// the consumer's verify-baselines/comment-refs.json, which only shrinks.
+
+const PATH_SPAN = /\.(ts|tsx|mjs|mts|js|json|css|mdx|md)$/
+const IDENTIFIER_SPAN = /^[A-Za-z_$][\w$]*(\(\))?$/
+const MEMBER_SPAN = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)+(\(\))?$/
+const CAMEL_OR_PASCAL = /[a-z][A-Z]/
+const SCREAMING_SNAKE = /^[A-Z0-9_]*_[A-Z0-9_]*$/
+const BACKTICK_SPAN = /`([^`\n]+)`/g
+
+function validateAllow(allow) {
+  if (allow === undefined || allow === null) return {}
+  if (typeof allow !== 'object' || Array.isArray(allow)) {
+    throw new Error('check-comment-refs: allow must be a map from reference name to reason')
+  }
+  for (const [name, reason] of Object.entries(allow)) {
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      throw new Error(`check-comment-refs: allow entry ${name} needs a non-empty reason string`)
+    }
+  }
+  return allow
+}
+
+/** The span's checked name and kind, or null when the span is not a reference. */
+export function classifySpan(span) {
+  if (span.includes('/') && PATH_SPAN.test(span)) return { kind: 'path', name: span }
+  if (MEMBER_SPAN.test(span)) {
+    const segments = span.replace(/\(\)$/, '').split('.')
+    return { kind: 'identifier', name: segments[segments.length - 1] }
+  }
+  if (IDENTIFIER_SPAN.test(span)) {
+    const name = span.replace(/\(\)$/, '')
+    if (name.length >= 4 && (CAMEL_OR_PASCAL.test(name) || SCREAMING_SNAKE.test(name))) {
+      return { kind: 'identifier', name }
+    }
+  }
+  return null
+}
+
+/** One scanner pass over `text`: the comment ranges and the code's identifier
+ *  set. String literals are never comments, and an identifier spelled only
+ *  inside a comment never lands in the set (the scanner's token kinds are the
+ *  whole distinction). */
+export function scanFile(ts, text, { jsx = false } = {}) {
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    /* skipTrivia */ false,
+    jsx ? ts.LanguageVariant.JSX : ts.LanguageVariant.Standard,
+    text,
+  )
+  const comments = [] // { start, end }
+  const identifiers = new Set()
+  let token = scanner.scan()
+  while (token !== ts.SyntaxKind.EndOfFileToken) {
+    if (token === ts.SyntaxKind.SingleLineCommentTrivia || token === ts.SyntaxKind.MultiLineCommentTrivia) {
+      comments.push({ start: scanner.getTokenStart(), end: scanner.getTokenEnd() })
+    } else if (token === ts.SyntaxKind.Identifier) {
+      identifiers.add(scanner.getTokenText())
+    }
+    token = scanner.scan()
+  }
+  return { comments, identifiers }
+}
+
+function lineOf(text, offset) {
+  let line = 1
+  for (let i = 0; i < offset; i++) if (text[i] === '\n') line += 1
+  return line
+}
+
+/**
+ * The unresolved references in the matched files.
+ * → { findings: [{ file, line, span, kind, fingerprint }], scannedFiles, commentCount }
+ * `file` is cwd-relative; `fingerprint` is `${file}|${span}` through fingerprint().
+ */
+export function findCommentRefFindings({ patterns, ignore = [], allow, cwd = process.cwd() } = {}) {
+  if (!patterns || patterns.length === 0) {
+    throw new Error('check-comment-refs: patterns is required (e.g. ["src/**/*.{ts,tsx}"])')
+  }
+  const allowed = validateAllow(allow)
+  // The scanner is the TARGET repo's TypeScript, never this package's own —
+  // with one carve-out: TypeScript 7 (the native port) ships no JS scanner
+  // API, so a repo whose `typescript` is v7 (this one) falls back to its
+  // `typescript-ast` alias (npm:typescript@^5), which is the same v5 API.
+  const req = createRequire(join(cwd, 'package.json'))
+  const tryLoad = (name, loader) => {
+    try {
+      const mod = loader(name)
+      return typeof mod.createScanner === 'function' ? mod : null
+    } catch {
+      return null
+    }
+  }
+  const ts =
+    tryLoad('typescript', req) ??
+    tryLoad('typescript-ast', req) ??
+    tryLoad('typescript-ast', createRequire(import.meta.url))
+  if (!ts) {
+    throw new Error('check-comment-refs: no TypeScript scanner API found (the target repo’s typescript is TS 7 and no typescript-ast alias resolves)')
+  }
+  const files = fastGlob.sync(patterns, { cwd, ignore })
+  if (files.length === 0) {
+    throw new Error(`check-comment-refs: patterns matched zero files (globs: ${patterns.join(', ')}; cwd ${cwd})`)
+  }
+
+  const identifiers = new Set()
+  const perFile = []
+  let commentCount = 0
+  for (const file of files) {
+    const text = readFileSync(resolve(cwd, file), 'utf8')
+    const scanned = scanFile(ts, text, { jsx: /\.[jt]sx$/.test(file) })
+    for (const id of scanned.identifiers) identifiers.add(id)
+    commentCount += scanned.comments.length
+    perFile.push({ file, text, comments: scanned.comments })
+  }
+
+  const findings = []
+  const cited = new Set()
+  for (const { file, text, comments } of perFile) {
+    for (const { start, end } of comments) {
+      const commentText = text.slice(start, end)
+      for (const match of commentText.matchAll(BACKTICK_SPAN)) {
+        const span = match[1]
+        const ref = classifySpan(span)
+        if (!ref) continue
+        cited.add(ref.name)
+        const resolved =
+          ref.kind === 'path'
+            ? existsSync(resolve(cwd, span)) || existsSync(resolve(dirname(resolve(cwd, file)), span))
+            : identifiers.has(ref.name)
+        if (!resolved && !(ref.name in allowed)) {
+          findings.push({
+            file,
+            line: lineOf(text, start + match.index),
+            span,
+            kind: ref.kind,
+            fingerprint: fingerprint(`${file}|${span}`),
+          })
+        }
+      }
+    }
+  }
+  for (const name of Object.keys(allowed)) {
+    if (!cited.has(name)) {
+      findings.push({
+        file: '(allow)',
+        line: 0,
+        span: name,
+        kind: 'stale-allow',
+        fingerprint: fingerprint(`stale-allow|${name}`),
+      })
+    }
+  }
+  return { findings, scannedFiles: files.length, commentCount }
+}
+
+export async function checkCommentRefs({ patterns, ignore, allow, baselinePath, cwd = process.cwd() } = {}) {
+  if (!baselinePath) {
+    throw new Error('check-comment-refs: baselinePath is required (e.g. "verify-baselines/comment-refs.json")')
+  }
+  const { findings, scannedFiles, commentCount } = findCommentRefFindings({ patterns, ignore, allow, cwd })
+  const baseline = readBaseline(resolve(cwd, baselinePath)) ?? []
+  const baselined = new Set(baseline)
+  for (const f of findings) {
+    if (baselined.has(f.fingerprint)) continue
+    console.error(
+      f.kind === 'stale-allow'
+        ? `comment-refs: stale allow entry \`${f.span}\` — no comment cites it; delete it`
+        : `comment-refs: ${f.file}:${f.line} \`${f.span}\` — no such ${f.kind} in the scanned set`,
+    )
+  }
+  console.log(`comment-refs: ${scannedFiles} file(s), ${commentCount} comment(s), ${findings.length} unresolved reference(s)`)
+  await ratchet({ check: 'comment-refs', findings: findings.map((f) => f.fingerprint), baselinePath, cwd })
+}
