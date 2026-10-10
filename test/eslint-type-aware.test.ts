@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { typeAwareRules } from '../src/eslint-type-aware.mjs'
 
 // R3-1081 — the shared type-aware rule set, driven over the fixture project by
-// the REAL producer (ESLint 9 + typescript-eslint, both devDependencies here).
+// the real producer (ESLint 9 + typescript-eslint, both devDependencies here).
 // Each case asserts one rule's verdict on one fixture file.
 
 const FIXTURE = join(__dirname, 'fixtures/type-aware')

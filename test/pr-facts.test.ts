@@ -3,9 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-// typescript-ast is the npm alias for typescript@5: this repo's own
-// `typescript` is 7 native, which exposes no createSourceFile, while every
-// repo pr-facts runs in carries the classic 5.x API the tests exercise.
+// typescript-ast is the npm alias for typescript@5, pinned for the classic
+// compiler API the tests exercise; this repo's own `typescript` is 5.x since
+// R3-1081 (typescript-eslint peers <6.1), and the 7-native no-API case lives
+// under the `typescript-next` alias (the loadTypescript failure test stages
+// through it).
 import * as ts from 'typescript-ast'
 import {
   BLOCK_END,
