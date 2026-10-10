@@ -3,9 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-// typescript-ast is the npm alias for typescript@5: this repo's own
-// `typescript` is 7 native, which exposes no createSourceFile, while every
-// repo pr-facts runs in carries the classic 5.x API the tests exercise.
+// typescript-ast is the npm alias for typescript@5, pinned for the classic
+// compiler API the tests exercise; this repo's own `typescript` is 5.x since
+// R3-1081 (typescript-eslint peers <6.1), and the 7-native no-API case lives
+// under the `typescript-next` alias (the loadTypescript failure test stages
+// through it).
 import * as ts from 'typescript-ast'
 import {
   BLOCK_END,
@@ -148,8 +150,18 @@ describe('loadTypescript failure modes', () => {
   })
 
   it('names the cause when the resolved typescript has no classic API', () => {
-    // This repo's own typescript is 7 native — the real no-createSourceFile case.
-    expect(() => loadTypescript(REPO_ROOT)).toThrow(/no createSourceFile/)
+    // The repo's `typescript-next` alias is TS 7 native — the real
+    // no-createSourceFile case (the root `typescript` is 5.x since R3-1081:
+    // typescript-eslint peers it). Stage a target whose typescript IS it.
+    const dir = mkdtempSync(join(tmpdir(), 'pr-facts-ts7-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), '{}')
+      mkdirSync(join(dir, 'node_modules'), { recursive: true })
+      symlinkSync(join(REPO_ROOT, 'node_modules/typescript-next'), join(dir, 'node_modules/typescript'), 'dir')
+      expect(() => loadTypescript(dir)).toThrow(/no createSourceFile/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
     // And the same cwd resolves fine through the 5.x alias the tests use.
     expect(typeof ts.createSourceFile).toBe('function')
   })
