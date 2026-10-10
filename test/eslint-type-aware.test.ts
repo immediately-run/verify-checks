@@ -30,8 +30,10 @@ async function lintFile(name: string) {
   return result.messages.map((m) => m.ruleId)
 }
 
+// The first lintFile call pays the projectService startup — seconds on a
+// shared CI runner (the 5s default timed the suite's first case out there).
 describe('typeAwareRules', () => {
-  it('a bare fetchThing() is found; void fetchThing() is not', async () => {
+  it('a bare fetchThing() is found; void fetchThing() is not', { timeout: 30000 }, async () => {
     expect(await lintFile('floating.ts')).toContain('@typescript-eslint/no-floating-promises')
     expect(await lintFile('voided.ts')).toEqual([])
   })
