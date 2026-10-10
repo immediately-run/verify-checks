@@ -21,7 +21,8 @@
     "./tokens": "./src/check-tokens.mjs",
     "./sweep": "./src/sweep.mjs",
     "./pr-facts": "./src/pr-facts.mjs",
-    "./comment-refs": "./src/check-comment-refs.mjs"
+    "./comment-refs": "./src/check-comment-refs.mjs",
+    "./eslint-type-aware": "./src/eslint-type-aware.mjs"
   },
   "files": [
     "src",
