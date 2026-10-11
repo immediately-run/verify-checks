@@ -47,7 +47,7 @@ export function recordsFromBody(body) {
  *  Anchored: the item's format has the comment START with the marker, so a comment that
  *  merely quotes one mid-body claims no id. */
 export function findingIdOf(body) {
-  const m = /^<!-- rg:([\w.-]+) -->/.exec(body ?? '');
+  const m = new RegExp('^' + RG_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([\\w.-]+) -->').exec(body ?? '');
   return m ? m[1] : null;
 }
 

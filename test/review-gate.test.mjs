@@ -174,9 +174,10 @@ test('collectGateFacts reads BOTH review pages, and the stub enforces the query 
   });
   const calls = [];
   const fetchImpl = async (query, variables) => {
-    // The stub honours GraphQL semantics: a declared-but-unwired variable is a server
-    // rejection (the variableNotUsed class the first cut shipped), and the page is
-    // keyed by the query's after argument, not by call count.
+    // The stub honours GraphQL semantics where it matters: a declared-but-unwired
+    // cursor variable is a server rejection (the variableNotUsed class the first cut
+    // shipped). Pages are served by call order; the calls[1] === 'c1' assertion is
+    // what keys the second page to the after argument.
     for (const v of ['cursor', 'threadCursor']) {
       if (query.includes(`$${v}:`) && !query.includes(`after:$${v}`)) throw new Error(`variableNotUsed: $${v}`);
     }
@@ -222,7 +223,7 @@ test('collectGateFacts: a threads-only continuation page never duplicates the re
   expect(deriveGateVerdict({ head: HEAD, records: out.records, threads: [] }).verdict).toBe('wait');
 });
 
-test('collectGateFacts: records parsed off REAL review bodies carry the review commit as reviewHead (and a malformed one errors the head)', async () => {
+test('collectGateFacts: records parsed off REAL review bodies carry the review commit as reviewHead (and a malformed one on a STALE head does not error the current head)', async () => {
   const pr758 = real('gate-site-main-758.json');
   const good = { ...pr758.reviews.nodes[0], body: `${pr758.reviews.nodes[0].body}\n\n${rec()}` };
   const bad = { ...pr758.reviews.nodes[1], body: `${pr758.reviews.nodes[1].body}\n\n${'```'}${RECORD_LANG}\n{not json}\n${'```'}` };
