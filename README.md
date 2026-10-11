@@ -11,7 +11,7 @@ Seven checks, one ratchet:
 |---|---|---|
 | `check-clones` | jscpd (JSON reporter) | sha256-16 of the clone's `fragment` text |
 | `check-unused` | knip (JSON reporter) | `file:name` across knip's `files`/`exports`/`types`/`dependencies`; `file:(file)` for `files` |
-| `check-untested` | git (merge-base diff + trailers); coverage mode: changed-line ranges ∩ the test run's lcov/istanbul report | name mode: failing file path (not baselined); coverage mode: `file\|start-end` line ranges in `verify-baselines/untested.json`, matched by line membership, re-checked for staleness when the file is touched |
+| `check-untested` | git (merge-base diff + trailers); coverage mode: changed-line ranges ∩ the test run's lcov/istanbul report | name mode: failing file path (not baselined); coverage mode: one uncovered-executable-line count per file in `verify-baselines/untested.json` (`"unloaded"` for a file the test run never loads) — the one baseline here that is a count, see below |
 | `check-dead-css` | selector scan vs source usage | `file:.selector` string |
 | `check-tokens` | postcss + postcss-value-parser declaration walk; lexical `var()` scan of sources | `undeclared\|file\|--name` for a `var()` no scanned CSS declares (a fallback does not excuse it); `literal\|file\|selector\|property\|literal` for a colour literal outside a custom-property declaration; `stale-allow\|--name` for a rotten allow entry |
 | `check-sweep` (`./sweep`) | pure geometry judges over a `LayoutSnapshot` collected in the consumer's browser | `overflow-x\|route\|vp`; `offscreen\|route\|vp\|control`; `occluded\|route\|vp\|control`; `target-small\|route\|vp\|control`; `wrapped\|route\|vp\|control`; `overlay-offscreen\|route\|vp\|trigger`; `overlay-clipped\|route\|vp\|trigger`; `overlay-detached\|route\|vp\|trigger`; `empty\|route\|vp\|controls` and `overlay-missing\|route\|vp\|trigger` so a broken selector turns red |
@@ -21,14 +21,36 @@ Seven checks, one ratchet:
 check cannot: are the CHANGED lines executed by the test run? The consumer's
 wrapper runs its own suite with the runner's coverage flag (`node --test
 --enable-source-maps --experimental-test-coverage --test-reporter=lcov`;
-jest/vitest's json report), then calls `checkUntestedCoverage`. A changed line
-neither executed nor trailer-declared nor baseline-allowed is the finding. The
+jest/vitest's json report), then calls `checkUntestedCoverage`. A changed
+logic file whose uncovered-line count exceeds its baseline entry, and that no
+trailer declares, is the finding. The
 `Untested:` trailer survives verbatim, with a tightened meaning: the reason
 must say why *coverage* is the wrong instrument for the file (self-testing
 scripts, declarative files, operator-session-only paths) — never "tested
 elsewhere".
 
-Baselines are **fingerprint sets, not counts**, and they only shrink: a found
+Its baseline is `{ "format": "uncovered-lines-per-file/1", "files": { "<path>":
+<count> } }`. A changed logic file is NEW when its uncovered-executable line
+count exceeds the recorded one (zero with no entry), and an entry is STALE
+when the count dropped, the file is gone, or it left the logic paths — the
+message names the number to write. It stores no line numbers on purpose: the
+line-range format before 0.10.0 went STALE whenever a line was inserted above
+a recorded gap, a comment included. The price is that lines inside one file
+can trade, which a fingerprint set would catch and a count cannot. A file
+absent from the report is recorded as `"unloaded"`: its changes are not
+measured (the check prints a note) until a test loads it, which turns the
+entry STALE. A renamed file's entry moves by hand to the new path. NEW is
+asked only of files the branch changed: a count that rose with its file
+untouched (a test removed, or growth under an `Untested:` trailer) meets the
+next branch that edits the file. On node's own lcov report every line has a
+record, so a comment or blank line added inside a block that never ran counts
+as one more uncovered line; a wrapper on that runner should rewrite the report
+to statement lines first, or expect such an edit to be NEW. A
+line-range baseline from 0.9 or earlier is refused, never reinterpreted —
+re-seed with `rm verify-baselines/untested.json && npm run check:untested --
+--write-baseline`.
+
+Every other baseline is a **fingerprint set, not a count**, and they only shrink: a found
 fingerprint missing from the baseline fails the check; a baseline entry that
 no longer matches anything fails it too, naming the entry. `--write-baseline`
 exists only for the first commit and refuses to run when the file already

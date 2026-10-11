@@ -14,16 +14,21 @@ import { isAbsolute, relative, resolve } from 'node:path'
 // Both answer, per repo-relative path:
 //   covered    — the 1-based lines executed at least once
 //   executable — the 1-based lines a mapped location STARTS at (statements
-//                for istanbul; DA lines for lcov). A comment, blank, or
-//                type-only line is in neither set, which is how istanbul-mode
-//                changed comment lines avoid becoming permanent findings; in
-//                lcov mode node marks those lines covered anyway)
+//                for istanbul; DA lines for lcov). In an istanbul report a
+//                comment, blank, or type-only line is in neither set. node's
+//                own lcov reporter gives every line a DA record: such a line
+//                is hit where the code around it ran, and zero-hit inside a
+//                block that never ran (measured on node 24.15, 2026-10-11) —
+//                there a comment counts as an uncovered line unless the
+//                consumer's wrapper rewrites the report to statement lines)
 //
-// A file ABSENT from the report is different from a file with no covered
+// A file absent from the report is different from a file with no covered
 // lines: absence means the test run never loaded it, so nothing about it is
-// known — the check treats every changed line of an absent file as uncovered
-// (the backend-#59 discrimination: imported-but-not-executed lines carry hits
-// 0; a never-imported file has no record at all).
+// known, its executable lines included. The check gives such a file no count:
+// when changed it is NEW, unless its baseline entry is "unloaded" — what
+// seeding writes for a file in this state (the backend-#59 discrimination:
+// imported-but-not-executed lines carry hits 0; a never-imported file has no
+// record at all).
 
 function normalizePath(path, cwd) {
   const absolute = isAbsolute(path) ? path : resolve(cwd, path)
