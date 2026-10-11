@@ -5,7 +5,7 @@
 //
 //   GH_TOKEN=… node bin/review-gate.mjs <owner> <repo> <pr>
 
-import { collectGateFacts, deriveGateVerdict, checkRunFor } from '../src/review-gate.mjs';
+import { collectGateFacts, deriveGateVerdict, checkRunFor, existingRunUpdate, CHECK_NAME } from '../src/review-gate.mjs';
 
 const [owner, name, pr] = process.argv.slice(2);
 if (!owner || !name || !pr) {
@@ -25,10 +25,22 @@ const HEADERS = { 'content-type': 'application/json', 'user-agent': 'immediately
 const BUDGET_MS = 60_000;
 
 async function post(path, payload) {
+  return request('POST', path, payload);
+}
+
+async function get(path) {
+  return request('GET', path);
+}
+
+async function patch_(path, payload) {
+  return request('PATCH', path, payload);
+}
+
+async function request(method, path, payload) {
   const res = await fetch(`https://api.github.com${path}`, {
-    method: 'POST',
+    method,
     headers: { ...HEADERS, authorization: `bearer ${token}` },
-    body: JSON.stringify(payload),
+    ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
     signal: AbortSignal.timeout(BUDGET_MS),
   });
   const text = await res.text();
@@ -36,7 +48,9 @@ async function post(path, payload) {
   try {
     json = JSON.parse(text);
   } catch {
-    json = null;
+    // A 200 with an unparseable body is not "no data": the GET's caller would read
+    // null as "no existing runs" and POST a twin beside the runs the broken list hid.
+    throw new Error(`${path}: ${res.status} with an unparseable body`);
   }
   if (!res.ok) throw new Error(`${path}: ${res.status} ${text.slice(0, 300)}`);
   return json;
@@ -51,5 +65,20 @@ const facts = await collectGateFacts({ owner, name, pr: Number(pr) }, fetchImpl)
 const { verdict, reason } = deriveGateVerdict(facts);
 console.log(`review-gate: ${verdict} — ${reason}`);
 
-await post(`/repos/${owner}/${name}/check-runs`, checkRunFor(verdict, reason, facts.head));
+// At most one OPEN check run per head: the gate dispatches per post/reply round, so a
+// POST-per-run would accumulate in_progress twins beside the success and the per-head
+// verdict would read ambiguous forever. Update the head's OPEN review-gate run in place
+// when one exists; a completed run stays as history and a post-completion dispatch
+// creates a new one (round-1 closure on the five workflow PRs).
+const runBody = checkRunFor(verdict, reason, facts.head);
+// filter=all, never the default: `latest` would hide an older open twin from every
+// later run, and the twin would read as pending forever.
+const existing = await get(`/repos/${owner}/${name}/commits/${facts.head}/check-runs?check_name=${encodeURIComponent(CHECK_NAME)}&filter=all&per_page=100`);
+const plan = existingRunUpdate(existing?.check_runs, runBody);
+if (plan.create) {
+  await post(`/repos/${owner}/${name}/check-runs`, plan.create);
+} else {
+  for (const c of plan.cancel ?? []) await patch_(`/repos/${owner}/${name}/check-runs/${c.id}`, c.body);
+  await patch_(`/repos/${owner}/${name}/check-runs/${plan.patch.id}`, plan.patch.body);
+}
 process.exit(verdict === 'error' ? 1 : 0);

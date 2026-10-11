@@ -5,8 +5,10 @@
 // version, but PRs never run the release job — so without this the cost lands
 // on `main` and on whoever pushes next.
 //
-// Scoped to what ships: `files:` from package.json (src/) plus package.json
-// itself and the lockfile. Tests, fixtures, CI config and docs demand no bump.
+// Scoped to what ships: `files:` from package.json (read from the producer,
+// never re-typed here — a bin/-only change counts the day the package ships
+// bin/) plus package.json itself and the lockfile. Tests, fixtures, CI config
+// and docs demand no bump.
 //
 // An unreachable registry or unknown base is a THIRD OUTCOME — "not published"
 // and "could not tell" are different answers; both fail here with the reason.
@@ -32,10 +34,19 @@ export function changedSince(base) {
   }
 }
 
-export function shipsChanges(changed) {
+export function shipsChanges(changed, files = ['src']) {
+  // The shipped prefixes come from package.json's `files` (the producer), never
+  // re-typed here — a bin/-only change on a package that ships bin/ used to pass with
+  // "no shipped bytes changed" (verify-checks#20, round 1).
+  // No classification by shape (a dotted dir or a ./-prefixed entry misclassifies —
+  // #20 round 3): normalize each entry (strip a leading ./ and a trailing /) and match
+  // exact-or-prefix — the sibling repos' original pattern.
+  const entries = files.map((f) => f.replace(/^\.\//, '').replace(/\/$/, ''))
+  const exact = new Set(['package.json', 'package-lock.json', ...entries])
+  const prefixes = entries.map((e) => `${e}/`)
   return changed.some((path) => {
-    if (path === 'package.json' || path === 'package-lock.json') return true
-    if (path.startsWith('src/')) {
+    if (exact.has(path)) return true
+    if (prefixes.some((d) => path.startsWith(d))) {
       if (/(^|\/)(test|tests)\//.test(path)) return false
       if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) return false
       return true
@@ -68,7 +79,17 @@ const selfTest = process.argv.includes('--self-test')
 if (invokedDirectly && selfTest) {
   const same = shipsChanges(['src/producers.mjs'])
   const testsOnly = shipsChanges(['test/baseline.test.ts', 'README.md', '.github/workflows/ci.yml'])
-  if (same !== true || testsOnly !== false) {
+  // R3-1166 (#20 round 2): the files-derived set is exercised, not just defaulted —
+  // a bin/-only change on a package shipping bin/ ships; on the src/-only default it
+  // does not; a bare FILE entry in files (not a prefix) matches only itself.
+  const binShips = shipsChanges(['bin/review-gate.mjs'], ['src', 'bin'])
+  const binDefault = shipsChanges(['bin/review-gate.mjs'])
+  // A bare FILE entry in files matches itself exactly (pre-fix it silently matched
+  // nothing — the '/' append turned it into a prefix no path carries).
+  const fileEntry = shipsChanges(['index.mjs'], ['src', 'index.mjs']) === true && shipsChanges(['other.mjs'], ['src', 'index.mjs']) === false
+  // A dotted directory entry prefixes fine (no shape classification — #20 round 3).
+  const dottedDir = shipsChanges(['dist.v2/foo.js'], ['src', 'dist.v2']) === true
+  if (same !== true || testsOnly !== false || binShips !== true || binDefault !== false || fileEntry !== true || dottedDir !== true) {
     console.error('check:publish-version: self-test failed')
     process.exit(1)
   }
@@ -77,11 +98,11 @@ if (invokedDirectly && selfTest) {
 }
 
 if (invokedDirectly) {
-  const { name, version } = JSON.parse(readFileSync('package.json', 'utf8'))
+  const { name, version, files } = JSON.parse(readFileSync('package.json', 'utf8'))
   const baseIndex = process.argv.indexOf('--base')
   const base = baseIndex !== -1 ? process.argv[baseIndex + 1] : 'origin/main'
   const changed = changedSince(base)
-  if (!shipsChanges(changed)) {
+  if (!shipsChanges(changed, files ?? ['src'])) {
     console.log(`check:publish-version: no shipped bytes changed — no bump needed`)
     process.exit(0)
   }
