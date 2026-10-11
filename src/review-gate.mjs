@@ -10,7 +10,7 @@
 
 /** The info string of the gate record's fenced block. */
 export const RECORD_LANG = 'review-gate-record';
-/** The inline finding comment's id prefix. */
+/** The inline finding comment's id prefix (anchored: the comment STARTS with it). */
 export const RG_PREFIX = '<!-- rg:';
 
 const SEVERITIES = new Set(['blocking', 'should-fix', 'nit']);
@@ -43,97 +43,133 @@ export function recordsFromBody(body) {
   return out;
 }
 
-/** The finding id of an inline comment, from its `<!-- rg:<id> -->` prefix, or null. */
+/** The finding id of an inline comment, from its leading `<!-- rg:<id> -->`, or null.
+ *  Anchored: the item's format has the comment START with the marker, so a comment that
+ *  merely quotes one mid-body claims no id. */
 export function findingIdOf(body) {
-  const m = /<!-- rg:([\w.-]+) -->/.exec(body ?? '');
+  const m = /^<!-- rg:([\w.-]+) -->/.exec(body ?? '');
   return m ? m[1] : null;
 }
 
 /**
  * facts: {
  *   head: string — the PR's head SHA,
- *   records: parsed gate records from every review (with their review's commit oid),
+ *   records: parsed gate records, each tagged `reviewHead` (its review's commit oid),
  *   threads: [{ findingId: string|null, isResolved: boolean, hasReplyAfterFinding: boolean }]
  * }
  *
  * The verdict:
- *   error — a record did not parse.
- *   wait  — no record matches the head, or the newest round on the head is round 1
- *           with fewer than two records from two different models.
- *   hold  — a blocking finding on the newest head round is open (thread unresolved
- *           AND no reply after the finding comment).
+ *   error — a record ON the current head (its review's commit, or its own head field)
+ *           did not parse. A malformed record on a STALE head review is not the current
+ *           head's error.
+ *   wait  — no record matches the head, or round 1 on the head has one record only.
+ *   hold  — round 1 on the head concluded with two records on ONE model or ONE reviewer
+ *           (a concluded-but-invalid round, not a pending one); or a blocking finding in
+ *           ANY record on the head is open (its thread unresolved AND unreplied; a
+ *           body-only blocking finding has no thread and is open by construction); at
+ *           round ≥ 3 the reason says "decision packet".
  *   pass  — otherwise.
  */
 export function deriveGateVerdict(facts) {
   const { head, records, threads } = facts;
-  if (records.some((r) => r.parseError)) return { verdict: 'error', reason: 'a gate record did not parse' };
+  if (records.some((r) => r.parseError && (r.reviewHead === head || r.head === head))) {
+    return { verdict: 'error', reason: 'a gate record did not parse' };
+  }
   const onHead = records.filter((r) => r.head === head);
   if (onHead.length === 0) return { verdict: 'wait', reason: `no review on ${head.slice(0, 7)}` };
   const newestRound = Math.max(...onHead.map((r) => r.round));
   const round = onHead.filter((r) => r.round === newestRound);
   if (newestRound === 1) {
-    const models = new Set(round.map((r) => r.model));
     if (round.length < 2) {
       return { verdict: 'wait', reason: `round 1 on ${head.slice(0, 7)} has ${round.length} record(s) — two reviewers required` };
     }
-    // Two records on one model is a CONCLUDED but invalid round one (a deviation, not a
-    // pending state) — hold, not wait: nothing further arrives on its own.
-    if (models.size < 2) {
-      return { verdict: 'hold', reason: `round 1 on ${head.slice(0, 7)}: two records, one model — the two reviewers must differ` };
+    const models = new Set(round.map((r) => r.model));
+    const reviewers = new Set(round.map((r) => r.reviewer));
+    if (models.size < 2 || reviewers.size < 2) {
+      return {
+        verdict: 'hold',
+        reason: `round 1 on ${head.slice(0, 7)}: ${round.length} records, ${reviewers.size} reviewer(s), ${models.size} model(s) — the two reviewers must differ, on two models`,
+      };
     }
   }
   const threadByFinding = new Map(threads.filter((t) => t.findingId).map((t) => [t.findingId, t]));
-  for (const r of round) {
+  // EVERY record on the head, not only the newest round's: a reply-only closure leaves
+  // the round-1 record's findings open in ITS record while a round-2 record lands clean
+  // on the same head — scoping to the newest round would read that as a pass.
+  for (const r of onHead) {
     for (const f of r.findings) {
       if (f.severity !== 'blocking') continue;
       const t = threadByFinding.get(f.id);
-      // A blocking finding with NO thread (body-only) is open by construction: nothing
-      // resolved it and nothing replied.
       if (!t || (!t.isResolved && !t.hasReplyAfterFinding)) {
-        return { verdict: 'hold', reason: `blocking finding ${f.id} (round ${newestRound}) is open` };
+        const reason = `blocking finding ${f.id} (round ${r.round}) is open`;
+        return { verdict: 'hold', reason: r.round >= 3 ? `${reason} — decision packet` : reason };
       }
     }
   }
   return { verdict: 'pass', reason: `round ${newestRound} on ${head.slice(0, 7)} concluded with no open blocking finding` };
 }
 
-/** The GraphQL page shape collectGateFacts reads. */
-const QUERY = `query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
+/** The GraphQL page shape collectGateFacts reads. Every declared variable is wired. */
+const QUERY = `query($owner:String!,$name:String!,$pr:Int!,$cursor:String,$threadCursor:String){
   repository(owner:$owner,name:$name){ pullRequest(number:$pr){
     headRefOid
-    reviews(first:50){ pageInfo{ hasNextPage endCursor } nodes{ body state commit{ oid } author{ login } } }
-    reviewThreads(first:100){ nodes{ isResolved comments(first:20){ nodes{ body createdAt author{ login } } } } }
+    reviews(first:50, after:$cursor){ pageInfo{ hasNextPage endCursor } nodes{ body state commit{ oid } author{ login } } }
+    reviewThreads(first:100, after:$threadCursor){ pageInfo{ hasNextPage endCursor } nodes{ isResolved comments(first:20){ nodes{ body createdAt author{ login } } } } }
   } } }`;
 
-/** Read a PR's reviews + review threads by GraphQL (paginated on reviews) into the
- *  facts deriveGateVerdict consumes. `fetchImpl(query, variables) → parsed response
- *  JSON` — injectable so the test never touches the network. */
+/** Read a PR's reviews + review threads by GraphQL (both paginated) into the facts
+ *  deriveGateVerdict consumes. `fetchImpl(query, variables) → parsed response JSON` —
+ *  injectable so the test never touches the network. */
 export async function collectGateFacts({ owner, name, pr }, fetchImpl) {
   const records = [];
   const threads = [];
+  const seenThreads = new Set();
   let cursor = null;
+  let threadCursor = null;
   let head = null;
   for (;;) {
-    const res = await fetchImpl(QUERY, { owner, name, pr, cursor });
+    const res = await fetchImpl(QUERY, { owner, name, pr, cursor, threadCursor });
     const prNode = res?.data?.repository?.pullRequest;
     if (!prNode) throw new Error(`collectGateFacts: no pullRequest in the response for ${owner}/${name}#${pr}`);
     head = prNode.headRefOid;
     for (const rev of prNode.reviews.nodes) {
-      for (const r of recordsFromBody(rev.body)) records.push(r);
+      for (const r of recordsFromBody(rev.body)) records.push({ ...r, reviewHead: rev.commit?.oid ?? null });
     }
     for (const t of prNode.reviewThreads.nodes) {
       const comments = t.comments.nodes;
       const first = comments[0];
+      const id = first ? findingIdOf(first.body) : null;
+      // The query re-requests the thread page on every reviews page — dedupe by the
+      // finding id (or the first comment's body hash when it carries no marker).
+      const key = id ?? `${t.isResolved}:${first?.body?.slice(0, 80) ?? ''}`;
+      if (seenThreads.has(key)) continue;
+      seenThreads.add(key);
       threads.push({
-        findingId: first ? findingIdOf(first.body) : null,
+        findingId: id,
         isResolved: t.isResolved,
         // A reply AFTER the finding comment (any author — today the reviewers and the
         // implementer post as one GitHub identity; the residual is the item's own).
         hasReplyAfterFinding: comments.length > 1,
       });
     }
-    if (!prNode.reviews.pageInfo.hasNextPage) break;
-    cursor = prNode.reviews.pageInfo.endCursor;
+    const rp = prNode.reviews.pageInfo;
+    const tp = prNode.reviewThreads.pageInfo;
+    cursor = rp.hasNextPage ? rp.endCursor : null;
+    threadCursor = tp.hasNextPage ? tp.endCursor : null;
+    if (!cursor && !threadCursor) break;
   }
   return { head, records, threads };
+}
+
+/** The verdict → check-run mapping (the item's "Check-run mapping", pure for its test):
+ *  pass → success; hold → failure; wait → in_progress ("no review on <sha7>"); error →
+ *  failure titled "error" — never a pass. */
+export function checkRunFor(verdict, reason, head) {
+  const CONCLUSION = { pass: 'success', hold: 'failure', error: 'failure' };
+  return {
+    name: 'review-gate',
+    head_sha: head,
+    ...(CONCLUSION[verdict] ? { status: 'completed', conclusion: CONCLUSION[verdict] } : { status: 'in_progress' }),
+    output: { title: verdict === 'error' ? 'error' : verdict, summary: reason },
+  };
 }

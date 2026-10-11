@@ -22,7 +22,8 @@
     "./sweep": "./src/sweep.mjs",
     "./pr-facts": "./src/pr-facts.mjs",
     "./comment-refs": "./src/check-comment-refs.mjs",
-    "./eslint-type-aware": "./src/eslint-type-aware.mjs"
+    "./eslint-type-aware": "./src/eslint-type-aware.mjs",
+    "./review-gate": "./src/review-gate.mjs"
   },
   "files": [
     "src",

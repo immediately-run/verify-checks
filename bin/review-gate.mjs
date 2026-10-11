@@ -4,11 +4,8 @@
 // (pull_request_target), never on PR code.
 //
 //   GH_TOKEN=… node bin/review-gate.mjs <owner> <repo> <pr>
-//
-// Verdict → check run: pass → success; hold → failure; wait → in_progress ("no review
-// on <sha7>"); error → failure titled "error" (never a pass).
 
-import { collectGateFacts, deriveGateVerdict } from '../src/review-gate.mjs';
+import { collectGateFacts, deriveGateVerdict, checkRunFor } from '../src/review-gate.mjs';
 
 const [owner, name, pr] = process.argv.slice(2);
 if (!owner || !name || !pr) {
@@ -22,36 +19,37 @@ if (!token) {
   process.exit(2);
 }
 
-const fetchImpl = async (query, variables) => {
-  const res = await fetch('https://api.github.com/graphql', {
+const HEADERS = { 'content-type': 'application/json', 'user-agent': 'immediately-run-review-gate' };
+// The workflow job's budget: a stalled api.github.com connection must not hold the
+// pull_request_target job until the workflow timeout with no check run written.
+const BUDGET_MS = 60_000;
+
+async function post(path, payload) {
+  const res = await fetch(`https://api.github.com${path}`, {
     method: 'POST',
-    headers: { authorization: `bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'immediately-run-review-gate' },
-    body: JSON.stringify({ query, variables }),
+    headers: { ...HEADERS, authorization: `bearer ${token}` },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(BUDGET_MS),
   });
-  if (!res.ok) throw new Error(`graphql ${res.status}`);
-  const j = await res.json();
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = null;
+  }
+  if (!res.ok) throw new Error(`${path}: ${res.status} ${text.slice(0, 300)}`);
+  return json;
+}
+
+const fetchImpl = (query, variables) => post('/graphql', { query, variables }).then((j) => {
   if (j.errors) throw new Error(`graphql: ${j.errors.map((e) => e.message).join('; ')}`);
   return j;
-};
+});
 
 const facts = await collectGateFacts({ owner, name, pr: Number(pr) }, fetchImpl);
 const { verdict, reason } = deriveGateVerdict(facts);
 console.log(`review-gate: ${verdict} — ${reason}`);
 
-const CONCLUSION = { pass: 'success', hold: 'failure', wait: null, error: 'failure' };
-const body = {
-  name: 'review-gate',
-  head_sha: facts.head,
-  ...(CONCLUSION[verdict] ? { status: 'completed', conclusion: CONCLUSION[verdict] } : { status: 'in_progress' }),
-  output: { title: verdict === 'error' ? 'error' : verdict, summary: reason },
-};
-const res = await fetch(`https://api.github.com/repos/${owner}/${name}/check-runs`, {
-  method: 'POST',
-  headers: { authorization: `bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'immediately-run-review-gate' },
-  body: JSON.stringify(body),
-});
-if (!res.ok) {
-  console.error(`check-runs POST: ${res.status} ${await res.text()}`);
-  process.exit(1);
-}
+await post(`/repos/${owner}/${name}/check-runs`, checkRunFor(verdict, reason, facts.head));
 process.exit(verdict === 'error' ? 1 : 0);
