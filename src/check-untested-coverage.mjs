@@ -1,12 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import fastGlob from 'fast-glob'
-import {
-  baselineMissing,
-  baselineOverwriteRefusal,
-  readBaseline,
-  writeBaselineFile,
-} from './baseline.mjs'
+import { baselineMissing, baselineOverwriteRefusal } from './baseline.mjs'
 import { readCoverageReport } from './coverage.mjs'
 import { changedLineRanges, changedSince, commitTrailers } from './producers.mjs'
 import { IS_TEST_FILE, matchesAny } from './untested-core.mjs'
@@ -16,37 +11,72 @@ import { IS_TEST_FILE, matchesAny } from './untested-core.mjs'
 // CHANGED lines executed by the test run?" — the only signal that catches
 // backend #59 (a sibling test that drove everything except the changed hunk).
 //
-// Finding = new-side lines of a changed logic file ∩ executable ∩ not
-// executed by the coverage report − trailer-declared − baseline-recorded.
-// A changed file ABSENT from the report (the test run never loaded it) counts
-// every changed line as uncovered — imported-but-not-executed lines carry
-// hits 0, a never-imported file has no record at all.
+// The verdict is per file, by count. A file's gap is the number of its lines
+// the coverage report marks executable and never executed. The baseline
+// records that number for every file that had a gap on the day the check was
+// seeded, and a changed logic file fails as NEW when its count now exceeds
+// the recorded one (zero when it has no entry). No line number is stored, so
+// a comment, a blank line, an import or a moved function — anything that
+// changes no coverage — changes no count and no verdict, and two branches
+// that both shift a file's lines do not touch the baseline at all.
 //
-// The baseline is a set of LINE RANGES (`file|start-end`, 1-based inclusive),
-// matched by line membership: a PR's uncovered changed lines pass when every
-// one of them lies inside a recorded historical gap (plan Q4's ratchet —
-// touching a pre-existing gap must not fail; a NEW uncovered line must). The
-// string-equality ratchet in baseline.mjs cannot express subset matching, so
-// this module drives read/write itself and shares the refusal/missing
-// messages. An entry goes STALE when the gap it records is re-checked and
-// found resolved — its lines now covered, or past the file's end — computed
-// whenever the file is in the changed set, plus a hard rule for every entry:
-// a file that no longer exists at HEAD fossilizes nothing.
+// A file absent from the report (the test run never loaded it) has no
+// measurable count: nothing says which of its lines are executable, and
+// counting all of them would make a comment a finding. Its entry is the
+// string "unloaded" instead. A changed file that is unloaded and has no such
+// entry is NEW; one that has it passes with a printed note, because the
+// change cannot be measured.
+//
+// An entry goes STALE when its file is gone or left the logic paths, when
+// the count dropped (lower the number, or delete the entry at zero), or when
+// an "unloaded" file is now loaded. The count is re-checked for every changed
+// logic file and for every recorded file the report has a record for, so the
+// branch that closes a gap — a test-only change included — is the one told
+// to shrink the baseline.
+//
+// What a count cannot see: lines inside one file can trade (cover three
+// recorded lines, add three new uncovered ones) and the count stays put.
 
-export function parseBaselineEntry(entry) {
-  const match = entry.match(/^(.+)\|(\d+)(?:-(\d+))?$/)
-  if (!match) {
-    throw new Error(`untested baseline entry ${JSON.stringify(entry)} is not "file|line" or "file|start-end"`)
-  }
-  const start = Number(match[2])
-  const end = match[3] === undefined ? start : Number(match[3])
-  if (end < start) throw new Error(`untested baseline entry ${JSON.stringify(entry)} has end before start`)
-  return { file: match[1], start, end }
+// The on-disk shape: { "format": <this>, "files": { "<path>": <count> | "unloaded" } },
+// one line per file, keys sorted. The line-range format this replaced was a
+// bare JSON array of "file|start-end" strings, so the two cannot be confused.
+export const UNTESTED_BASELINE_FORMAT = 'uncovered-lines-per-file/1'
+export const UNLOADED = 'unloaded'
+
+// The refusal for a baseline written by verify-checks 0.9 and earlier. Its
+// entries are line ranges; nothing here reads them as counts.
+export function legacyBaselineRefusal(baselinePath) {
+  return (
+    `untested: ${baselinePath} is a line-range baseline ("file|start-end" entries, verify-checks 0.9 and earlier). ` +
+    'This version records one uncovered-line count per file and does not read line ranges. ' +
+    `Re-seed it: rm ${baselinePath} && npm run check:untested -- --write-baseline, then commit the new file.`
+  )
 }
 
-export function formatBaselineEntry(file, [start, endExclusive]) {
-  const end = endExclusive - 1
-  return `${file}|${start}${end === start ? '' : `-${end}`}`
+// Parsed JSON → { legacy: true } for the line-range array, else
+// { legacy: false, files: Map<path, count | "unloaded"> }. Anything else throws.
+export function parseUntestedBaseline(parsed, baselinePath) {
+  if (Array.isArray(parsed)) return { legacy: true }
+  const files = parsed?.files
+  if (parsed?.format !== UNTESTED_BASELINE_FORMAT || files === null || typeof files !== 'object' || Array.isArray(files)) {
+    throw new Error(
+      `untested baseline ${baselinePath} must be { "format": ${JSON.stringify(UNTESTED_BASELINE_FORMAT)}, "files": { "<path>": <count> | "${UNLOADED}" } }`,
+    )
+  }
+  for (const [file, recorded] of Object.entries(files)) {
+    if (recorded !== UNLOADED && !(Number.isInteger(recorded) && recorded > 0)) {
+      throw new Error(
+        `untested baseline ${baselinePath}: ${JSON.stringify(file)} records ${JSON.stringify(recorded)} — ` +
+          `an entry is a positive line count or "${UNLOADED}"; a file with no gap has no entry`,
+      )
+    }
+  }
+  return { legacy: false, files: new Map(Object.entries(files)) }
+}
+
+export function formatUntestedBaseline(files) {
+  const sorted = Object.fromEntries([...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+  return `${JSON.stringify({ format: UNTESTED_BASELINE_FORMAT, files: sorted }, null, 2)}\n`
 }
 
 // Pure: the changed lines of each logic file that the coverage report does
@@ -92,114 +122,75 @@ export function uncoveredRangesByFile({ files, rangesByFile, report, trailers = 
   return { gaps, declared }
 }
 
-// The gap lines a baseline does not excuse: per file, the gap runs minus
-// every recorded range, returned as runs of unexcused lines.
-export function unexcusedGaps(gaps, baselineEntries) {
-  const byFile = new Map()
-  for (const entry of baselineEntries) {
-    const ranges = byFile.get(entry.file) ?? []
-    ranges.push([entry.start, entry.end + 1]) // to half-open
-    byFile.set(entry.file, ranges)
-  }
-  const findings = []
-  for (const { file, ranges } of gaps) {
-    const excused = byFile.get(file) ?? []
-    const remaining = []
-    for (const [start, end] of ranges) {
-      let run = null
-      for (let line = start; line < end; line += 1) {
-        const inBaseline = excused.some(([s, e]) => line >= s && line < e)
-        if (!inBaseline) {
-          run = run ?? [line, line]
-          run[1] = line + 1
-        } else if (run) {
-          remaining.push(run)
-          run = null
-        }
-      }
-      if (run) remaining.push(run)
-    }
-    if (remaining.length > 0) findings.push({ file, ranges: remaining })
-  }
-  return findings
-}
 
-// A file's CURRENT uncovered-executable line count, whole file, same rule the
-// per-diff gap computation uses: a file absent from the report counts every
-// line; a line no mapped statement starts at is not executable.
-export function uncoveredLineCount(file, report, cwd) {
-  const lineCount = lineCountOf(resolve(cwd, file))
+// A file's gap as the report measures it: the count of lines a mapped
+// statement starts at that never ran — or UNLOADED when the report has no
+// record of the file. An empty file has nothing to load and counts zero.
+export function fileGap(file, report, cwd) {
   const entry = report.get(file)
-  if (entry === undefined) return lineCount
+  if (entry === undefined) return readFileSync(resolve(cwd, file), 'utf8') === '' ? 0 : UNLOADED
   let count = 0
-  for (let line = 1; line <= lineCount; line += 1) {
-    if (entry.executable.has(line) && !entry.covered.has(line)) count += 1
+  for (const line of entry.executable) {
+    if (!entry.covered.has(line)) count += 1
   }
   return count
 }
 
-// A file's line count: newlines, plus one for a non-empty file with no
-// trailing newline (its last line exists even unterminated).
-function lineCountOf(path) {
-  const text = readFileSync(path, 'utf8')
-  if (text === '') return 0
-  const newlines = text.split('\n').length - 1
-  return text.endsWith('\n') ? newlines : newlines + 1
+// The day-one state: every logic file's gap, files with none left out.
+export function seedUntestedBaseline({ files, report, cwd }) {
+  const seeded = new Map()
+  for (const file of files) {
+    const gap = fileGap(file, report, cwd)
+    if (gap !== 0) seeded.set(file, gap)
+  }
+  return seeded
 }
 
-// The recorded gaps that no longer exist: entry lines whose file vanished at
-// HEAD (checked for EVERY entry — a deleted file's record fossilizes
-// otherwise), and — for files this run changed, where a fresh re-check is
-// meaningful — entry lines now covered or past the file's end.
-export function staleEntries({ baselineEntries, changedFiles, report, cwd }) {
+// The ratchet. `changedFiles` are the files this branch changed that are in
+// the instrument (logic paths, not tests, not trailer-declared): only they
+// can be NEW. STALE is asked of every entry.
+export function compareToBaseline({ baseline, changedFiles, report, logicPaths, cwd }) {
   const changedSet = new Set(changedFiles)
+  const fresh = []
   const stale = []
-  for (const entry of baselineEntries) {
-    const path = resolve(cwd, entry.file)
-    if (!existsSync(path)) {
-      stale.push({ entry, why: 'the file no longer exists' })
-      continue
+  const unmeasured = []
+  const recheck = new Set(changedFiles)
+  for (const [file, recorded] of baseline) {
+    if (!existsSync(resolve(cwd, file))) {
+      stale.push({ file, recorded, why: 'the file no longer exists; delete the entry' })
+    } else if (IS_TEST_FILE.test(file) || !matchesAny(file, logicPaths)) {
+      stale.push({ file, recorded, why: 'the file is no longer under the logic paths; delete the entry' })
+    } else if (report.has(file)) {
+      recheck.add(file)
     }
-    if (!changedSet.has(entry.file)) continue
-    const lineCount = lineCountOf(path)
-    const reportEntry = report.get(entry.file)
-    const deadLines = []
-    for (let line = entry.start; line <= entry.end; line += 1) {
-      if (line > lineCount) deadLines.push(line)
-      else if (reportEntry !== undefined && reportEntry.covered.has(line)) deadLines.push(line)
-      // A line now outside every location span keeps the entry: re-deriving
-      // executability under line shifts misfires; covering the line is the
-      // unambiguous resolution.
-    }
-    if (deadLines.length > 0) {
+  }
+  for (const file of [...recheck].sort()) {
+    const recorded = baseline.get(file) ?? 0
+    const current = fileGap(file, report, cwd)
+    if (current === UNLOADED) {
+      if (recorded === UNLOADED) unmeasured.push(file)
+      else fresh.push({ file, current, recorded })
+    } else if (recorded === UNLOADED) {
       stale.push({
-        entry,
-        why: `line(s) ${deadLines.join(', ')} are now covered or gone — shrink or delete the entry`,
+        file,
+        recorded,
+        why:
+          `the test run now loads it, with ${current} uncovered executable line(s); ` +
+          (current === 0 ? 'delete the entry' : `record ${current}`),
+      })
+    } else if (current > recorded) {
+      if (changedSet.has(file)) fresh.push({ file, current, recorded })
+    } else if (current < recorded) {
+      stale.push({
+        file,
+        recorded,
+        why:
+          `${current} uncovered executable line(s) now; ` +
+          (current === 0 ? 'delete the entry' : `lower the entry to ${current}`),
       })
     }
   }
-  return stale
-}
-
-// The growth guard: line membership alone cannot tell an old gap line from a
-// NEW uncovered line occupying a recorded range after an edit (found by the
-// review gate, 2026-09-30). For every changed file with recorded ranges, the
-// file's CURRENT whole-file uncovered count must not exceed the recorded
-// total — a recorded gap may shrink or move, never grow.
-export function growthViolations({ baselineEntries, changedFiles, report, cwd }) {
-  const recordedTotalByFile = new Map()
-  for (const entry of baselineEntries) {
-    recordedTotalByFile.set(entry.file, (recordedTotalByFile.get(entry.file) ?? 0) + (entry.end - entry.start + 1))
-  }
-  const violations = []
-  for (const file of changedFiles) {
-    const recordedTotal = recordedTotalByFile.get(file)
-    if (recordedTotal === undefined) continue
-    if (!existsSync(resolve(cwd, file))) continue // deleted: the stale pass reports it
-    const current = uncoveredLineCount(file, report, cwd)
-    if (current > recordedTotal) violations.push({ file, current, recordedTotal })
-  }
-  return violations
+  return { fresh, stale, unmeasured }
 }
 
 export function checkUntestedCoverage({
@@ -226,12 +217,20 @@ export function checkUntestedCoverage({
   }
   const report = readCoverageReport(coverageReportPath, { cwd })
   const resolvedBaseline = resolve(cwd, baselinePath)
+  const stored = readStoredBaseline(resolvedBaseline, baselinePath)
+  // A line-range file is refused before anything else, seeding included: the
+  // overwrite refusal below would tell the reader to shrink it by hand.
+  if (stored?.legacy) {
+    console.error(legacyBaselineRefusal(baselinePath))
+    process.exitCode = 1
+    return
+  }
 
   if (argv.includes('--write-baseline')) {
-    // Seeding records the gaps that EXIST at HEAD over every logic file — the
+    // Seeding records the gaps that exist at HEAD over every logic file — the
     // day-one state plan Q4's ratchet exists to excuse — never merely the
     // current diff's. (The string-ratchet's refusal is shared verbatim.)
-    if (existsSync(resolvedBaseline)) {
+    if (stored !== null) {
       console.error(baselineOverwriteRefusal('untested', baselinePath))
       process.exitCode = 1
       return
@@ -250,45 +249,29 @@ export function checkUntestedCoverage({
         `check-untested-coverage: logicPaths matched zero files for seeding (include: ${logicPaths.include.join(', ')}; cwd ${cwd})`,
       )
     }
-    const entries = []
-    for (const file of files) {
-      const lineCount = lineCountOf(resolve(cwd, file))
-      if (lineCount === 0) continue
-      const reportEntry = report.get(file)
-      const ranges = []
-      let run = null
-      for (let line = 1; line <= lineCount; line += 1) {
-        const isUncovered =
-          reportEntry === undefined ? true : reportEntry.executable.has(line) && !reportEntry.covered.has(line)
-        if (isUncovered) {
-          run = run ?? [line, line]
-          run[1] = line + 1
-        } else if (run) {
-          ranges.push(run)
-          run = null
-        }
-      }
-      if (run) ranges.push(run)
-      for (const range of ranges) entries.push(formatBaselineEntry(file, range))
-    }
-    writeBaselineFile(resolvedBaseline, entries)
+    const seeded = seedUntestedBaseline({ files, report, cwd })
+    mkdirSync(dirname(resolvedBaseline), { recursive: true })
+    writeFileSync(resolvedBaseline, formatUntestedBaseline(seeded))
+    const unloaded = [...seeded.values()].filter((gap) => gap === UNLOADED).length
     console.log(
-      `untested: wrote ${entries.length} baseline range(s) over ${files.length} logic file(s) to ${baselinePath}`,
+      `untested: wrote ${seeded.size} file entr${seeded.size === 1 ? 'y' : 'ies'} (${unloaded} unloaded) ` +
+        `over ${files.length} logic file(s) to ${baselinePath}`,
     )
     return
   }
 
-  const fullBaseline = readBaseline(resolvedBaseline)
-  if (fullBaseline === null) {
+  if (stored === null) {
     console.error(baselineMissing('untested', baselinePath, cwd))
     process.exitCode = 1
     return
   }
-  const baselineEntries = fullBaseline.map(parseBaselineEntry)
+  const baseline = stored.files
 
   const changed = changedSince(base, cwd)
   const trailers = commitTrailers(base, cwd)
   const rangesByFile = changedLineRanges(base, changed, cwd)
+  // The trailer escape (plan Q5): a declared file is out of the instrument,
+  // so it is in neither `gaps` nor the files that can be NEW.
   const { gaps, declared } = uncoveredRangesByFile({
     files: changed,
     rangesByFile,
@@ -299,40 +282,59 @@ export function checkUntestedCoverage({
   for (const entry of declared) {
     console.log(`untested: ${entry.file} — declared: ${entry.reason}`)
   }
-  for (const gap of gaps) {
-    console.error(
-      `untested: ${gap.file} — changed lines not executed by the test run: ` +
-        gap.ranges.map(([start, end]) => (end === start + 1 ? `${start}` : `${start}-${end - 1}`)).join(', '),
-    )
-  }
-  const findings = unexcusedGaps(gaps, baselineEntries)
-  for (const finding of findings) {
-    console.error(`untested: NEW ${finding.file}|${finding.ranges.map((r) => formatRange(r)).join(',')}`)
-  }
-  // The growth guard: see growthViolations above. The trailer escape applies
-  // here exactly as in the gap computation (plan Q5): a declared file is out
-  // of the instrument entirely.
-  const trailerFiles = new Set(trailers.map((trailer) => trailer.file))
-  const growthChecked = changed.filter(
-    (file) => !trailerFiles.has(file) && !IS_TEST_FILE.test(file) && matchesAny(file, logicPaths),
+  const declaredFiles = new Set(declared.map((entry) => entry.file))
+  const inInstrument = changed.filter(
+    (file) => !declaredFiles.has(file) && !IS_TEST_FILE.test(file) && matchesAny(file, logicPaths),
   )
-  const growth = growthViolations({ baselineEntries, changedFiles: growthChecked, report, cwd })
-  for (const { file, current, recordedTotal } of growth) {
-    console.error(
-      `untested: NEW ${file} — the recorded gap grew (${current} uncovered lines now vs ${recordedTotal} recorded); ` +
-        'cover the new lines, or declare the file with an Untested: trailer',
+  const { fresh, stale, unmeasured } = compareToBaseline({
+    baseline,
+    changedFiles: inInstrument,
+    report,
+    logicPaths,
+    cwd,
+  })
+
+  // This branch's own unexecuted lines, per file: what to cover when the
+  // file is NEW, and a printed note when the recorded count absorbs them.
+  const changedGapText = new Map(gaps.map((gap) => [gap.file, gap.ranges.map(formatRange).join(', ')]))
+  const flagged = new Set([...fresh, ...stale].map((finding) => finding.file))
+  for (const file of unmeasured) {
+    console.log(`untested: ${file} — recorded as ${UNLOADED}: the test run never loads it, so this change is not measured`)
+  }
+  for (const [file, text] of changedGapText) {
+    if (flagged.has(file) || !report.has(file)) continue
+    console.log(
+      `untested: ${file} — changed lines not executed by the test run: ${text} (within the ${baseline.get(file)} recorded for the file)`,
     )
   }
-  const stale = staleEntries({ baselineEntries, changedFiles: changed, report, cwd })
-  for (const { entry, why } of stale) {
-    console.error(`untested: STALE ${entry.file}|${entry.start}${entry.end === entry.start ? '' : `-${entry.end}`} — ${why}`)
+  for (const { file, current, recorded } of fresh) {
+    const changedText = changedGapText.get(file)
+    const what =
+      current === UNLOADED
+        ? 'the test run never loads it (no record in the coverage report), so none of its lines are measured'
+        : `${current} uncovered executable line(s), ${recorded} recorded` +
+          (changedText ? `; changed lines not executed by the test run: ${changedText}` : '')
+    console.error(`untested: NEW ${file} — ${what}; cover the new lines, or declare the file with an Untested: trailer`)
   }
-  if (findings.length > 0 || growth.length > 0 || stale.length > 0) {
-    console.error(
-      `untested: ${findings.length + growth.length} new, ${stale.length} stale (baseline ${baselinePath})`,
-    )
+  for (const { file, recorded, why } of stale) {
+    console.error(`untested: STALE ${file} (recorded ${recorded}) — ${why}`)
+  }
+  if (fresh.length > 0 || stale.length > 0) {
+    console.error(`untested: ${fresh.length} new, ${stale.length} stale (baseline ${baselinePath})`)
     process.exitCode = 1
   }
+}
+
+// null when there is no baseline file; otherwise parseUntestedBaseline's answer.
+function readStoredBaseline(resolvedBaseline, baselinePath) {
+  if (!existsSync(resolvedBaseline)) return null
+  let parsed
+  try {
+    parsed = JSON.parse(readFileSync(resolvedBaseline, 'utf8'))
+  } catch (err) {
+    throw new Error(`baseline ${baselinePath} is not valid JSON: ${err.message}`)
+  }
+  return parseUntestedBaseline(parsed, baselinePath)
 }
 
 function formatRange([start, endExclusive]) {

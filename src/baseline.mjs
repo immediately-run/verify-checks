@@ -36,8 +36,8 @@ export function writeBaselineFile(baselinePath, entries) {
 
 // The ratchet's refusal and missing-baseline messages, one home for every
 // check that keeps a shrink-only baseline (the string-equality ratchet below,
-// and the line-range ratchet in check-untested-coverage, whose subset
-// semantics string-diffing cannot express).
+// and the per-file count ratchet in check-untested-coverage, whose "at most
+// the recorded count" comparison string-diffing cannot express).
 export function baselineOverwriteRefusal(check, baselinePath) {
   return (
     `${check}: refusing to overwrite ${baselinePath} — a baseline file already exists there. ` +

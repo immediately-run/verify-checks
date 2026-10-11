@@ -6,11 +6,14 @@ export { untestedFiles, matchesAny, hasSiblingTest, globToRegex, IS_TEST_FILE } 
 export {
   checkUntestedCoverage,
   uncoveredRangesByFile,
-  unexcusedGaps,
-  staleEntries,
-  growthViolations,
-  parseBaselineEntry,
-  formatBaselineEntry,
+  fileGap,
+  seedUntestedBaseline,
+  compareToBaseline,
+  parseUntestedBaseline,
+  formatUntestedBaseline,
+  legacyBaselineRefusal,
+  UNTESTED_BASELINE_FORMAT,
+  UNLOADED,
 } from './check-untested-coverage.mjs'
 export { changedLineRanges, changedSince } from './producers.mjs'
 export { readCoverageReport, readLcov, readIstanbulCoverage } from './coverage.mjs'
