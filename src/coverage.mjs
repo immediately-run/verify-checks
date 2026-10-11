@@ -25,9 +25,10 @@ import { isAbsolute, relative, resolve } from 'node:path'
 // A file absent from the report is different from a file with no covered
 // lines: absence means the test run never loaded it, so nothing about it is
 // known, its executable lines included. The check gives such a file no count:
-// it is NEW when changed with no baseline entry, and recorded as "unloaded"
-// otherwise (the backend-#59 discrimination: imported-but-not-executed lines
-// carry hits 0; a never-imported file has no record at all).
+// when changed it is NEW, unless its baseline entry is "unloaded" — what
+// seeding writes for a file in this state (the backend-#59 discrimination:
+// imported-but-not-executed lines carry hits 0; a never-imported file has no
+// record at all).
 
 function normalizePath(path, cwd) {
   const absolute = isAbsolute(path) ? path : resolve(cwd, path)
