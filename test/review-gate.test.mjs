@@ -139,7 +139,9 @@ test('error: a record that does not parse ON THE HEAD is never a pass; on a stal
 });
 
 test('existingRunUpdate: no open run → create; one open run → patch it; twins → patch the newest-id, cancel the rest', () => {
-  const body = { name: 'review-gate', head_sha: HEAD, status: 'completed', conclusion: 'success', output: { title: 'pass', summary: 'r' } };
+  // The body comes from checkRunFor — the producer the bin feeds in with — so the
+  // name/head_sha strip and the output pass-through are pinned at the join.
+  const body = checkRunFor('pass', 'r', HEAD);
   expect(existingRunUpdate([], body)).toEqual({ create: body });
   expect(existingRunUpdate([{ id: 7, name: 'review-gate', status: 'in_progress' }], body)).toEqual({
     patch: { id: 7, body: { status: 'completed', conclusion: 'success', output: body.output } },

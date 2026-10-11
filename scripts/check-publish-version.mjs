@@ -5,8 +5,10 @@
 // version, but PRs never run the release job — so without this the cost lands
 // on `main` and on whoever pushes next.
 //
-// Scoped to what ships: `files:` from package.json (src/) plus package.json
-// itself and the lockfile. Tests, fixtures, CI config and docs demand no bump.
+// Scoped to what ships: `files:` from package.json (read from the producer,
+// never re-typed here — a bin/-only change counts the day the package ships
+// bin/) plus package.json itself and the lockfile. Tests, fixtures, CI config
+// and docs demand no bump.
 //
 // An unreachable registry or unknown base is a THIRD OUTCOME — "not published"
 // and "could not tell" are different answers; both fail here with the reason.
@@ -36,8 +38,8 @@ export function shipsChanges(changed, files = ['src']) {
   // The shipped prefixes come from package.json's `files` (the producer), never
   // re-typed here — a bin/-only change on a package that ships bin/ used to pass with
   // "no shipped bytes changed" (verify-checks#20, round 1).
-  const exact = new Set(['package.json', 'package-lock.json'])
-  const dirPrefixes = files.map((f) => (f.endsWith('/') ? f : `${f}/`))
+  const exact = new Set(['package.json', 'package-lock.json', ...files.filter((f) => !f.endsWith('/') && f.includes('.'))])
+  const dirPrefixes = files.filter((f) => !f.includes('.')).map((f) => (f.endsWith('/') ? f : `${f}/`))
   return changed.some((path) => {
     if (exact.has(path)) return true
     if (dirPrefixes.some((d) => path.startsWith(d))) {
@@ -73,7 +75,15 @@ const selfTest = process.argv.includes('--self-test')
 if (invokedDirectly && selfTest) {
   const same = shipsChanges(['src/producers.mjs'])
   const testsOnly = shipsChanges(['test/baseline.test.ts', 'README.md', '.github/workflows/ci.yml'])
-  if (same !== true || testsOnly !== false) {
+  // R3-1166 (#20 round 2): the files-derived set is exercised, not just defaulted —
+  // a bin/-only change on a package shipping bin/ ships; on the src/-only default it
+  // does not; a bare FILE entry in files (not a prefix) matches only itself.
+  const binShips = shipsChanges(['bin/review-gate.mjs'], ['src', 'bin'])
+  const binDefault = shipsChanges(['bin/review-gate.mjs'])
+  // A bare FILE entry in files matches itself exactly (pre-fix it silently matched
+  // nothing — the '/' append turned it into a prefix no path carries).
+  const fileEntry = shipsChanges(['index.mjs'], ['src', 'index.mjs']) === true && shipsChanges(['other.mjs'], ['src', 'index.mjs']) === false
+  if (same !== true || testsOnly !== false || binShips !== true || binDefault !== false || fileEntry !== true) {
     console.error('check:publish-version: self-test failed')
     process.exit(1)
   }

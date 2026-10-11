@@ -48,7 +48,9 @@ async function request(method, path, payload) {
   try {
     json = JSON.parse(text);
   } catch {
-    json = null;
+    // A 200 with an unparseable body is not "no data": the GET's caller would read
+    // null as "no existing runs" and POST a twin beside the runs the broken list hid.
+    throw new Error(`${path}: ${res.status} with an unparseable body`);
   }
   if (!res.ok) throw new Error(`${path}: ${res.status} ${text.slice(0, 300)}`);
   return json;
@@ -63,10 +65,11 @@ const facts = await collectGateFacts({ owner, name, pr: Number(pr) }, fetchImpl)
 const { verdict, reason } = deriveGateVerdict(facts);
 console.log(`review-gate: ${verdict} — ${reason}`);
 
-// One check run per head: the gate dispatches per post/reply round, so a POST-per-run
-// would accumulate in_progress twins beside the success and the per-head verdict would
-// read ambiguous forever. Update the head's existing review-gate run in place when one
-// exists (round-2 closure on the five workflow PRs).
+// At most one OPEN check run per head: the gate dispatches per post/reply round, so a
+// POST-per-run would accumulate in_progress twins beside the success and the per-head
+// verdict would read ambiguous forever. Update the head's OPEN review-gate run in place
+// when one exists; a completed run stays as history and a post-completion dispatch
+// creates a new one (round-2 closure on the five workflow PRs).
 const runBody = checkRunFor(verdict, reason, facts.head);
 // filter=all, never the default: `latest` would hide an older open twin from every
 // later run, and the twin would read as pending forever.
