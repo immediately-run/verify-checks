@@ -9,7 +9,7 @@ import { expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deriveGateVerdict, collectGateFacts, recordsFromBody, findingIdOf, checkRunFor, RECORD_LANG } from '../src/review-gate.mjs';
+import { deriveGateVerdict, collectGateFacts, recordsFromBody, findingIdOf, checkRunFor, existingRunUpdate, RECORD_LANG } from '../src/review-gate.mjs';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const real = (f) => JSON.parse(readFileSync(join(FIXTURES, f), 'utf8')).data.repository.pullRequest;
@@ -136,6 +136,26 @@ test('error: a record that does not parse ON THE HEAD is never a pass; on a stal
   expect(
     deriveGateVerdict(facts([staleBad, ...recordsFromBody(rec()), ...recordsFromBody(rec({ reviewer: 'B', model: 'model-b' }))])).verdict,
   ).toBe('pass');
+});
+
+test('existingRunUpdate: no open run → create; one open run → patch it; twins → patch the newest-id, cancel the rest', () => {
+  const body = { name: 'review-gate', head_sha: HEAD, status: 'completed', conclusion: 'success', output: { title: 'pass', summary: 'r' } };
+  expect(existingRunUpdate([], body)).toEqual({ create: body });
+  expect(existingRunUpdate([{ id: 7, name: 'review-gate', status: 'in_progress' }], body)).toEqual({
+    patch: { id: 7, body: { status: 'completed', conclusion: 'success', output: body.output } },
+    cancel: [],
+  });
+  const twins = existingRunUpdate(
+    [
+      { id: 7, name: 'review-gate', status: 'in_progress' },
+      { id: 9, name: 'review-gate', status: 'in_progress' },
+      { id: 5, name: 'review-gate', status: 'completed' },
+      { id: 8, name: 'other', status: 'in_progress' },
+    ],
+    body,
+  );
+  expect(twins.patch.id).toBe(9);
+  expect(twins.cancel).toEqual([{ id: 7, body: { status: 'completed', conclusion: 'cancelled' } }]);
 });
 
 test('checkRunFor: pass → success, hold → failure, wait → in_progress, error → failure titled error', () => {

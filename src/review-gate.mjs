@@ -169,13 +169,35 @@ export async function collectGateFacts({ owner, name, pr }, fetchImpl) {
   return { head, records, threads };
 }
 
+/** The check run's name, one home (the bin's GET filter and the POSTed name must agree,
+ *  or the update-in-place silently returns to POST-per-dispatch). */
+export const CHECK_NAME = 'review-gate';
+
+/** Which of a head's same-name check runs a new verdict updates, and what the update
+ *  carries. Pure for its test. The API documents NO array order for the list endpoint,
+ *  so the pick is explicit: the live run with the HIGHEST id (newest created). Every
+ *  OTHER still-open run is settled `completed`/`cancelled` — a twin left open reads as
+ *  pending forever (the ambiguity the update-in-place exists to remove). Returns
+ *  { patch: { id, body }, cancel: [{ id, body }] } or { create: body }. */
+export function existingRunUpdate(checkRuns, runBody) {
+  const mine = (checkRuns ?? []).filter((c) => c.name === runBody.name);
+  const open = mine.filter((c) => c.status !== 'completed');
+  if (open.length === 0) return { create: runBody };
+  const latest = open.reduce((a, b) => (b.id > a.id ? b : a));
+  const { name: _n, head_sha: _h, ...rest } = runBody;
+  return {
+    patch: { id: latest.id, body: rest },
+    cancel: open.filter((c) => c.id !== latest.id).map((c) => ({ id: c.id, body: { status: 'completed', conclusion: 'cancelled' } })),
+  };
+}
+
 /** The verdict → check-run mapping (the item's "Check-run mapping", pure for its test):
  *  pass → success; hold → failure; wait → in_progress ("no review on <sha7>"); error →
  *  failure titled "error" — never a pass. */
 export function checkRunFor(verdict, reason, head) {
   const CONCLUSION = { pass: 'success', hold: 'failure', error: 'failure' };
   return {
-    name: 'review-gate',
+    name: CHECK_NAME,
     head_sha: head,
     ...(CONCLUSION[verdict] ? { status: 'completed', conclusion: CONCLUSION[verdict] } : { status: 'in_progress' }),
     output: { title: verdict === 'error' ? 'error' : verdict, summary: reason },

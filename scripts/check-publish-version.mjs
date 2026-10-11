@@ -32,10 +32,15 @@ export function changedSince(base) {
   }
 }
 
-export function shipsChanges(changed) {
+export function shipsChanges(changed, files = ['src']) {
+  // The shipped prefixes come from package.json's `files` (the producer), never
+  // re-typed here — a bin/-only change on a package that ships bin/ used to pass with
+  // "no shipped bytes changed" (verify-checks#20, round 1).
+  const exact = new Set(['package.json', 'package-lock.json'])
+  const dirPrefixes = files.map((f) => (f.endsWith('/') ? f : `${f}/`))
   return changed.some((path) => {
-    if (path === 'package.json' || path === 'package-lock.json') return true
-    if (path.startsWith('src/')) {
+    if (exact.has(path)) return true
+    if (dirPrefixes.some((d) => path.startsWith(d))) {
       if (/(^|\/)(test|tests)\//.test(path)) return false
       if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) return false
       return true
@@ -77,11 +82,11 @@ if (invokedDirectly && selfTest) {
 }
 
 if (invokedDirectly) {
-  const { name, version } = JSON.parse(readFileSync('package.json', 'utf8'))
+  const { name, version, files } = JSON.parse(readFileSync('package.json', 'utf8'))
   const baseIndex = process.argv.indexOf('--base')
   const base = baseIndex !== -1 ? process.argv[baseIndex + 1] : 'origin/main'
   const changed = changedSince(base)
-  if (!shipsChanges(changed)) {
+  if (!shipsChanges(changed, files ?? ['src'])) {
     console.log(`check:publish-version: no shipped bytes changed — no bump needed`)
     process.exit(0)
   }

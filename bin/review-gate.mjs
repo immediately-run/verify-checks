@@ -5,7 +5,7 @@
 //
 //   GH_TOKEN=… node bin/review-gate.mjs <owner> <repo> <pr>
 
-import { collectGateFacts, deriveGateVerdict, checkRunFor } from '../src/review-gate.mjs';
+import { collectGateFacts, deriveGateVerdict, checkRunFor, existingRunUpdate, CHECK_NAME } from '../src/review-gate.mjs';
 
 const [owner, name, pr] = process.argv.slice(2);
 if (!owner || !name || !pr) {
@@ -68,12 +68,14 @@ console.log(`review-gate: ${verdict} — ${reason}`);
 // read ambiguous forever. Update the head's existing review-gate run in place when one
 // exists (round-2 closure on the five workflow PRs).
 const runBody = checkRunFor(verdict, reason, facts.head);
-const existing = await get(`/repos/${owner}/${name}/commits/${facts.head}/check-runs?check_name=review-gate`);
-const mine = (existing?.check_runs ?? []).filter((c) => c.name === 'review-gate');
-if (mine.length > 0) {
-  const { name: _n, head_sha: _h, ...patch } = runBody;
-  await patch_(`/repos/${owner}/${name}/check-runs/${mine[mine.length - 1].id}`, patch);
+// filter=all, never the default: `latest` would hide an older open twin from every
+// later run, and the twin would read as pending forever.
+const existing = await get(`/repos/${owner}/${name}/commits/${facts.head}/check-runs?check_name=${encodeURIComponent(CHECK_NAME)}&filter=all&per_page=100`);
+const plan = existingRunUpdate(existing?.check_runs, runBody);
+if (plan.create) {
+  await post(`/repos/${owner}/${name}/check-runs`, plan.create);
 } else {
-  await post(`/repos/${owner}/${name}/check-runs`, runBody);
+  for (const c of plan.cancel ?? []) await patch_(`/repos/${owner}/${name}/check-runs/${c.id}`, c.body);
+  await patch_(`/repos/${owner}/${name}/check-runs/${plan.patch.id}`, plan.patch.body);
 }
 process.exit(verdict === 'error' ? 1 : 0);
