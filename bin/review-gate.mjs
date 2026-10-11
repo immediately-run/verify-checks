@@ -25,10 +25,22 @@ const HEADERS = { 'content-type': 'application/json', 'user-agent': 'immediately
 const BUDGET_MS = 60_000;
 
 async function post(path, payload) {
+  return request('POST', path, payload);
+}
+
+async function get(path) {
+  return request('GET', path);
+}
+
+async function patch_(path, payload) {
+  return request('PATCH', path, payload);
+}
+
+async function request(method, path, payload) {
   const res = await fetch(`https://api.github.com${path}`, {
-    method: 'POST',
+    method,
     headers: { ...HEADERS, authorization: `bearer ${token}` },
-    body: JSON.stringify(payload),
+    ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
     signal: AbortSignal.timeout(BUDGET_MS),
   });
   const text = await res.text();
@@ -51,5 +63,17 @@ const facts = await collectGateFacts({ owner, name, pr: Number(pr) }, fetchImpl)
 const { verdict, reason } = deriveGateVerdict(facts);
 console.log(`review-gate: ${verdict} — ${reason}`);
 
-await post(`/repos/${owner}/${name}/check-runs`, checkRunFor(verdict, reason, facts.head));
+// One check run per head: the gate dispatches per post/reply round, so a POST-per-run
+// would accumulate in_progress twins beside the success and the per-head verdict would
+// read ambiguous forever. Update the head's existing review-gate run in place when one
+// exists (round-2 closure on the five workflow PRs).
+const runBody = checkRunFor(verdict, reason, facts.head);
+const existing = await get(`/repos/${owner}/${name}/commits/${facts.head}/check-runs?check_name=review-gate`);
+const mine = (existing?.check_runs ?? []).filter((c) => c.name === 'review-gate');
+if (mine.length > 0) {
+  const { name: _n, head_sha: _h, ...patch } = runBody;
+  await patch_(`/repos/${owner}/${name}/check-runs/${mine[mine.length - 1].id}`, patch);
+} else {
+  await post(`/repos/${owner}/${name}/check-runs`, runBody);
+}
 process.exit(verdict === 'error' ? 1 : 0);
