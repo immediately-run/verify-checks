@@ -124,6 +124,7 @@ export async function collectGateFacts({ owner, name, pr }, fetchImpl) {
   const records = [];
   const threads = [];
   const seenThreads = new Set();
+  const seenReviews = new Set();
   let cursor = null;
   let threadCursor = null;
   let head = null;
@@ -132,7 +133,14 @@ export async function collectGateFacts({ owner, name, pr }, fetchImpl) {
     const prNode = res?.data?.repository?.pullRequest;
     if (!prNode) throw new Error(`collectGateFacts: no pullRequest in the response for ${owner}/${name}#${pr}`);
     head = prNode.headRefOid;
+    // A continuation call that only advances the THREAD cursor re-answers reviews page
+    // 1 (after:null) — never re-process its reviews (a duplicated record flips a
+    // one-record round 1 from wait to a false hold). Reviews dedupe by identity (the
+    // review's commit + body), threads by finding id below.
     for (const rev of prNode.reviews.nodes) {
+      const rk = `${rev.commit?.oid ?? ''}:${rev.body ?? ''}`;
+      if (seenReviews.has(rk)) continue;
+      seenReviews.add(rk);
       for (const r of recordsFromBody(rev.body)) records.push({ ...r, reviewHead: rev.commit?.oid ?? null });
     }
     for (const t of prNode.reviewThreads.nodes) {

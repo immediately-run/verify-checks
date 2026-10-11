@@ -190,3 +190,59 @@ test('collectGateFacts reads BOTH review pages, and the stub enforces the query 
   // Threads are deduped across pages (the server repeats them); the count is the real page's.
   expect(out.threads.length).toBe(threads.length);
 });
+
+test('collectGateFacts: a threads-only continuation page never duplicates the reviews page records', async () => {
+  const pr758 = real('gate-site-main-758.json');
+  const recordBody = `${pr758.reviews.nodes[0].body}\n\n${rec()}`;
+  const review = { ...pr758.reviews.nodes[0], body: recordBody };
+  const mk = (revs, revNext, threadNext, threadCursorOut) => ({
+    data: {
+      repository: {
+        pullRequest: {
+          headRefOid: pr758.headRefOid,
+          reviews: { pageInfo: { hasNextPage: revNext, endCursor: revNext ? 'rc1' : null }, nodes: revs },
+          reviewThreads: {
+            pageInfo: { hasNextPage: threadNext, endCursor: threadNext ? threadCursorOut : null },
+            nodes: pr758.reviewThreads.nodes,
+          },
+        },
+      },
+    },
+  });
+  const fetchImpl = async (query, variables) => {
+    for (const v of ['cursor', 'threadCursor']) {
+      if (query.includes(`$${v}:`) && !query.includes(`after:$${v}`)) throw new Error(`variableNotUsed: $${v}`);
+    }
+    // Page 1: one review (carrying a record), more threads. Page 2: threads continue,
+    // reviews exhausted — the server re-answers reviews page 1 (after:null).
+    return variables.threadCursor === null ? mk([review], false, true, 'tc1') : mk([review], false, false, null);
+  };
+  const out = await collectGateFacts({ owner: 'immediately-run', name: 'immediately-run-site-main', pr: 758 }, fetchImpl);
+  expect(out.records.length).toBe(1);
+  expect(deriveGateVerdict({ head: HEAD, records: out.records, threads: [] }).verdict).toBe('wait');
+});
+
+test('collectGateFacts: records parsed off REAL review bodies carry the review commit as reviewHead (and a malformed one errors the head)', async () => {
+  const pr758 = real('gate-site-main-758.json');
+  const good = { ...pr758.reviews.nodes[0], body: `${pr758.reviews.nodes[0].body}\n\n${rec()}` };
+  const bad = { ...pr758.reviews.nodes[1], body: `${pr758.reviews.nodes[1].body}\n\n${'```'}${RECORD_LANG}\n{not json}\n${'```'}` };
+  const page = {
+    data: {
+      repository: {
+        pullRequest: {
+          headRefOid: pr758.headRefOid,
+          reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [good, bad] },
+          reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+        },
+      },
+    },
+  };
+  const out = await collectGateFacts({ owner: 'immediately-run', name: 'immediately-run-site-main', pr: 758 }, async () => page);
+  expect(out.records.length).toBe(2);
+  expect(out.records[0].reviewHead).toBe(good.commit?.oid ?? null);
+  expect(out.records[1].parseError).toBe(true);
+  expect(out.records[1].reviewHead).toBe(bad.commit?.oid ?? null);
+  // …and end to end: the malformed record is on an OLD head (the reviews predate the
+  // current head), so the head's verdict is wait, not error.
+  expect(deriveGateVerdict({ head: HEAD, records: out.records, threads: [] }).verdict).toBe('wait');
+});
