@@ -259,7 +259,7 @@ describe('uncoveredRangesByFile (pure)', () => {
       ]),
     )
 
-  it('covered, uncovered, and partially covered changed hunks', () => {
+  it('covered and partially covered changed hunks; a file with no coverage record lists nothing', () => {
     const report = reportOf({
       'src/covered.ts': { covered: [1, 2, 3], executable: [1, 2, 3] },
       'src/partial.ts': { covered: [10, 11, 13], executable: [10, 11, 12, 13] }, // 12 never ran
@@ -275,10 +275,8 @@ describe('uncoveredRangesByFile (pure)', () => {
       report,
       logicPaths,
     })
-    expect(gaps).toEqual([
-      { file: 'src/bare.ts', ranges: [[1, 6]] },
-      { file: 'src/partial.ts', ranges: [[12, 13]] },
-    ])
+    // src/bare.ts has no line the report can call executable: fileGap answers for it.
+    expect(gaps).toEqual([{ file: 'src/partial.ts', ranges: [[12, 13]] }])
   })
 
   it('a changed line no location spans (comment, blank, type-only) is not a finding', () => {
@@ -731,6 +729,17 @@ test('positive', () => assert.equal(classify(2), 2))
         errors: [],
         logs: ['untested: lib/calc.js — changed lines not executed by the test run: 4-5 (within the 2 recorded for the file)'],
       })
+
+      // The limit of this runner's report: node gives every line a DA record,
+      // so a comment and a blank line inside the never-run block are two more
+      // zero-hit lines. (The vitest suite below holds the same edit at exit 0.)
+      repo.write('lib/calc.js', CALC.replace("    return 'negative'", "    // why negative\n\n    return 'negative'"))
+      repo.addAll()
+      repo.commit('comment the never-run block')
+      writeFileSync(join(repo.dir, 'coverage.info'), runCoverage(repo.dir))
+      const inside = runCheck(opts)
+      expect(inside.exitCode).toBe(1)
+      expect(inside.errors[0]).toMatch(/^untested: NEW lib\/calc\.js — 4 uncovered executable line\(s\), 2 recorded;/)
 
       // New uncovered lines prepended (the old gap shifts down by three): the count grew.
       repo.write(

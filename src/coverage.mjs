@@ -22,11 +22,12 @@ import { isAbsolute, relative, resolve } from 'node:path'
 //                there a comment counts as an uncovered line unless the
 //                consumer's wrapper rewrites the report to statement lines)
 //
-// A file ABSENT from the report is different from a file with no covered
+// A file absent from the report is different from a file with no covered
 // lines: absence means the test run never loaded it, so nothing about it is
-// known — the check treats every changed line of an absent file as uncovered
-// (the backend-#59 discrimination: imported-but-not-executed lines carry hits
-// 0; a never-imported file has no record at all).
+// known, its executable lines included. The check gives such a file no count:
+// it is NEW when changed with no baseline entry, and recorded as "unloaded"
+// otherwise (the backend-#59 discrimination: imported-but-not-executed lines
+// carry hits 0; a never-imported file has no record at all).
 
 function normalizePath(path, cwd) {
   const absolute = isAbsolute(path) ? path : resolve(cwd, path)

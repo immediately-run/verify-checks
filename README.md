@@ -21,8 +21,9 @@ Seven checks, one ratchet:
 check cannot: are the CHANGED lines executed by the test run? The consumer's
 wrapper runs its own suite with the runner's coverage flag (`node --test
 --enable-source-maps --experimental-test-coverage --test-reporter=lcov`;
-jest/vitest's json report), then calls `checkUntestedCoverage`. A changed line
-neither executed nor trailer-declared nor baseline-allowed is the finding. The
+jest/vitest's json report), then calls `checkUntestedCoverage`. A changed
+logic file whose uncovered-line count exceeds its baseline entry, and that no
+trailer declares, is the finding. The
 `Untested:` trailer survives verbatim, with a tightened meaning: the reason
 must say why *coverage* is the wrong instrument for the file (self-testing
 scripts, declarative files, operator-session-only paths) — never "tested
@@ -38,7 +39,13 @@ a recorded gap, a comment included. The price is that lines inside one file
 can trade, which a fingerprint set would catch and a count cannot. A file
 absent from the report is recorded as `"unloaded"`: its changes are not
 measured (the check prints a note) until a test loads it, which turns the
-entry STALE. A renamed file's entry moves by hand to the new path. A
+entry STALE. A renamed file's entry moves by hand to the new path. NEW is
+asked only of files the branch changed: a count that rose with its file
+untouched (a test removed, or growth under an `Untested:` trailer) meets the
+next branch that edits the file. On node's own lcov report every line has a
+record, so a comment or blank line added inside a block that never ran counts
+as one more uncovered line; a wrapper on that runner should rewrite the report
+to statement lines first, or expect such an edit to be NEW. A
 line-range baseline from 0.9 or earlier is refused, never reinterpreted —
 re-seed with `rm verify-baselines/untested.json && npm run check:untested --
 --write-baseline`.

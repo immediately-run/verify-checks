@@ -36,6 +36,13 @@ import { IS_TEST_FILE, matchesAny } from './untested-core.mjs'
 //
 // What a count cannot see: lines inside one file can trade (cover three
 // recorded lines, add three new uncovered ones) and the count stays put.
+//
+// NEW is asked only of the files a branch changed, as the item prescribes.
+// A count can therefore rise on main with its file untouched — a test
+// removed, or a trailer-declared change, which is out of the instrument by
+// design — and the next branch to touch that file meets it as NEW. Asking
+// NEW of every file instead would fail every later branch for a declared
+// file's growth, so the cost stays with the file's next editor.
 
 // The on-disk shape: { "format": <this>, "files": { "<path>": <count> | "unloaded" } },
 // one line per file, keys sorted. The line-range format this replaced was a
@@ -81,7 +88,8 @@ export function formatUntestedBaseline(files) {
 
 // Pure: the changed lines of each logic file that the coverage report does
 // not execute. `report` maps file → { covered, executable } (see
-// coverage.mjs); ranges are half-open [start, end).
+// coverage.mjs); ranges are half-open [start, end). A file the report has no
+// record of has no measurable lines and is left out: fileGap answers for it.
 export function uncoveredRangesByFile({ files, rangesByFile, report, trailers = [], logicPaths }) {
   const trailerByFile = new Map(trailers.map((trailer) => [trailer.file, trailer.reason]))
   const gaps = []
@@ -97,15 +105,14 @@ export function uncoveredRangesByFile({ files, rangesByFile, report, trailers = 
     const ranges = rangesByFile.get(file) ?? []
     if (ranges.length === 0) continue // a pure deletion or mode change has no lines to cover
     const entry = report.get(file)
+    if (entry === undefined) continue
     const uncovered = []
     for (const [start, end] of ranges) {
       let run = null
       for (let line = start; line < end; line += 1) {
-        // A file the report never loaded: every line is uncovered. A line no
-        // mapped statement starts at (comment, blank, type-only, a mid-span
-        // continuation) is not executable and is never a finding.
-        const isUncovered = entry === undefined ? true : entry.executable.has(line) && !entry.covered.has(line)
-        if (isUncovered) {
+        // A line no mapped statement starts at (comment, blank, type-only, a
+        // mid-span continuation) is not executable and is never listed.
+        if (entry.executable.has(line) && !entry.covered.has(line)) {
           run = run ?? [line, line]
           run[1] = line + 1
         } else if (run) {
@@ -121,7 +128,6 @@ export function uncoveredRangesByFile({ files, rangesByFile, report, trailers = 
   declared.sort((a, b) => a.file.localeCompare(b.file))
   return { gaps, declared }
 }
-
 
 // A file's gap as the report measures it: the count of lines a mapped
 // statement starts at that never ran — or UNLOADED when the report has no
@@ -302,7 +308,7 @@ export function checkUntestedCoverage({
     console.log(`untested: ${file} — recorded as ${UNLOADED}: the test run never loads it, so this change is not measured`)
   }
   for (const [file, text] of changedGapText) {
-    if (flagged.has(file) || !report.has(file)) continue
+    if (flagged.has(file)) continue
     console.log(
       `untested: ${file} — changed lines not executed by the test run: ${text} (within the ${baseline.get(file)} recorded for the file)`,
     )
