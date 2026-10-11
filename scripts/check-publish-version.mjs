@@ -38,11 +38,15 @@ export function shipsChanges(changed, files = ['src']) {
   // The shipped prefixes come from package.json's `files` (the producer), never
   // re-typed here — a bin/-only change on a package that ships bin/ used to pass with
   // "no shipped bytes changed" (verify-checks#20, round 1).
-  const exact = new Set(['package.json', 'package-lock.json', ...files.filter((f) => !f.endsWith('/') && f.includes('.'))])
-  const dirPrefixes = files.filter((f) => !f.includes('.')).map((f) => (f.endsWith('/') ? f : `${f}/`))
+  // No classification by shape (a dotted dir or a ./-prefixed entry misclassifies —
+  // #20 round 3): normalize each entry (strip a leading ./ and a trailing /) and match
+  // exact-or-prefix — the sibling repos' original pattern.
+  const entries = files.map((f) => f.replace(/^\.\//, '').replace(/\/$/, ''))
+  const exact = new Set(['package.json', 'package-lock.json', ...entries])
+  const prefixes = entries.map((e) => `${e}/`)
   return changed.some((path) => {
     if (exact.has(path)) return true
-    if (dirPrefixes.some((d) => path.startsWith(d))) {
+    if (prefixes.some((d) => path.startsWith(d))) {
       if (/(^|\/)(test|tests)\//.test(path)) return false
       if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) return false
       return true
@@ -83,7 +87,9 @@ if (invokedDirectly && selfTest) {
   // A bare FILE entry in files matches itself exactly (pre-fix it silently matched
   // nothing — the '/' append turned it into a prefix no path carries).
   const fileEntry = shipsChanges(['index.mjs'], ['src', 'index.mjs']) === true && shipsChanges(['other.mjs'], ['src', 'index.mjs']) === false
-  if (same !== true || testsOnly !== false || binShips !== true || binDefault !== false || fileEntry !== true) {
+  // A dotted directory entry prefixes fine (no shape classification — #20 round 3).
+  const dottedDir = shipsChanges(['dist.v2/foo.js'], ['src', 'dist.v2']) === true
+  if (same !== true || testsOnly !== false || binShips !== true || binDefault !== false || fileEntry !== true || dottedDir !== true) {
     console.error('check:publish-version: self-test failed')
     process.exit(1)
   }

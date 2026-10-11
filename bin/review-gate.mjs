@@ -69,7 +69,7 @@ console.log(`review-gate: ${verdict} — ${reason}`);
 // POST-per-run would accumulate in_progress twins beside the success and the per-head
 // verdict would read ambiguous forever. Update the head's OPEN review-gate run in place
 // when one exists; a completed run stays as history and a post-completion dispatch
-// creates a new one (round-2 closure on the five workflow PRs).
+// creates a new one (round-1 closure on the five workflow PRs).
 const runBody = checkRunFor(verdict, reason, facts.head);
 // filter=all, never the default: `latest` would hide an older open twin from every
 // later run, and the twin would read as pending forever.
