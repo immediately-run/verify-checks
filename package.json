@@ -1,6 +1,6 @@
 {
   "name": "@immediately-run/verify-checks",
-  "version": "0.8.3",
+  "version": "0.9.0",
   "description": "Deterministic quality checks shared by the immediately.run core repos: clones (jscpd), unused exports (knip), untested logic (git merge-base + Untested trailers; coverage mode: changed lines must be executed), dead CSS, tokens (undeclared var() references and raw colour literals), layout sweep (pure geometry judges over collected boxes). Baselines are fingerprint sets that only shrink.",
   "license": "UNLICENSED",
   "repository": {
@@ -22,7 +22,8 @@
     "./sweep": "./src/sweep.mjs",
     "./pr-facts": "./src/pr-facts.mjs",
     "./comment-refs": "./src/check-comment-refs.mjs",
-    "./eslint-type-aware": "./src/eslint-type-aware.mjs"
+    "./eslint-type-aware": "./src/eslint-type-aware.mjs",
+    "./review-gate": "./src/review-gate.mjs"
   },
   "files": [
     "src",
@@ -52,6 +53,7 @@
     "typescript-next": "npm:typescript@7.0.2"
   },
   "bin": {
-    "pr-facts": "./bin/pr-facts.mjs"
+    "pr-facts": "./bin/pr-facts.mjs",
+    "review-gate": "./bin/review-gate.mjs"
   }
 }
