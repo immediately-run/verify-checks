@@ -68,7 +68,7 @@ function referencesGlobal(node, ts, bound) {
   const parent = node.parent
   if (!parent) return false
   if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
-    return ts.isIdentifier(parent.expression) && GLOBAL_RECEIVERS.includes(parent.expression.text)
+    return isGlobalReceiver(parent.expression, ts)
   }
   if (ts.isBindingElement(parent)) {
     // A destructuring element READS the property its propertyName names (or,
@@ -83,14 +83,31 @@ function referencesGlobal(node, ts, bound) {
   return !bound.has(node.text)
 }
 
-/** The ObjectBindingPattern's initializer: one of the GLOBAL_RECEIVERS,
- *  bare — the global receivers the member rule uses. */
+/** The ObjectBindingPattern's initializer destructures a global receiver:
+ *  the receiver itself, through the casts and assertions that wrap it
+ *  (`window as any`, `(window)`, `window!`). */
 function destructuresFromGlobalReceiver(bindingElement, ts) {
   const pattern = bindingElement.parent
   const holder = pattern && pattern.parent
   const initializer = holder &&
     (ts.isVariableDeclaration(holder) || ts.isParameter(holder)) ? holder.initializer : undefined
-  return !!initializer && ts.isIdentifier(initializer) && GLOBAL_RECEIVERS.includes(initializer.text)
+  return !!initializer && isGlobalReceiver(initializer, ts)
+}
+
+/** Is this expression a global receiver, spelled bare or through a cast?
+ *  Aliases and dynamically-spelled receivers stay invisible by design. */
+function isGlobalReceiver(expression, ts) {
+  let node = expression
+  while (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  ) {
+    node = node.expression
+  }
+  return ts.isIdentifier(node) && GLOBAL_RECEIVERS.includes(node.text)
 }
 
 /** Declaring/labeling positions: the parent uses the Identifier as its

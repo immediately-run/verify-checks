@@ -249,6 +249,24 @@ describe('the checks', () => {
     expect(findings.every((f) => f.file === 'src/App.tsx' && typeof f.line === 'number')).toBe(true)
   })
 
+  it('web storage: a cast-wrapped global receiver is still the receiver (as/paren/non-null/satisfies)', async () => {
+    const dir = tempRepo()
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'src', 'casts.ts'), [
+      'const { localStorage } = window as any',
+      'const a = (window as any).sessionStorage',
+      'const b = globalThis.caches!',
+      'const props = { indexedDB: 1 } as const',
+      'const { indexedDB } = props',
+      'export const out = { localStorage, a, b, indexedDB }',
+    ].join('\n'))
+    const findings = await runOver(webStorageCheck, ['src/casts.ts'], dir)
+    // line 1 reads window.localStorage through the cast; lines 2-3 name the
+    // receiver directly; lines 4-5 destructure a CAST LOCAL and bind, so
+    // line 6's shorthand spread flags only the window-derived localStorage.
+    expect(findings.map((f) => f.line).sort()).toEqual([1, 2, 3, 6])
+  })
+
   it('web storage: type-space declarations bind — a use of a locally declared interface/type/enum named like a banned global is clean', async () => {
     const dir = tempRepo()
     mkdirSync(join(dir, 'src'))

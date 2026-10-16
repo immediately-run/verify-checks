@@ -37,6 +37,9 @@ import * as workflowSecretPair from './invariants/workflow-secret-pair-gated-tog
 
 export const CORE_REPOS = ['landing-page', 'sdk', 'sandbox', 'site-main', 'backend']
 
+/** The org's repository-name prefix, one home for every fold and unfold. */
+const REMOTE_PREFIX = 'immediately-run-'
+
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url))
 const REGISTRY_PATH = join(PACKAGE_ROOT, 'invariants', 'registry.json')
 const FIXTURE_ROOT = join(PACKAGE_ROOT, 'test', 'invariants')
@@ -65,7 +68,7 @@ export function normalizeRepoName(raw) {
   let name = raw
   if (name.endsWith('.git')) name = name.slice(0, -4)
   name = basename(name)
-  const stripped = name.replace(/^immediately-run-/, '')
+  const stripped = name.startsWith(REMOTE_PREFIX) ? name.slice(REMOTE_PREFIX.length) : name
   return stripped === '' ? name : stripped
 }
 
@@ -182,7 +185,7 @@ export function validateSource(source, docsRoot) {
     // Workspaces keep either spelling for a checkout's directory (grove,
     // immediately-run-sdk); try the name as given first, then folded, then
     // prefixed — first existing directory wins.
-    const candidates = [repo, repo.replace(/^immediately-run-/, ''), `immediately-run-${repo}`]
+    const candidates = [repo, normalizeRepoName(repo), `${REMOTE_PREFIX}${repo}`]
     const sibling = candidates
       .map((candidate) => join(workspaceRoot, candidate))
       .find((directory) => existsSync(directory))
