@@ -286,10 +286,7 @@
           "cli"
         ],
         "paths": [
-          "src/**",
-          "DEPRECATION_CANDIDATES.md",
-          "CODE_SPEC_REFERENCES.md",
-          "REFACTOR_CANDIDATES.md"
+          "src/**"
         ]
       },
       "enforcement": "review",

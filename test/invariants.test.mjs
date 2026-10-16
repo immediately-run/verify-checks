@@ -201,6 +201,14 @@ describe('source validation (validateSource over a synthetic docs checkout)', ()
     expect(validateSource('grove/src/lib/theme.ts cites', present)).toEqual({ ok: true })
     expect(validateSource('grove/src/lib/GONE.ts cites', present).error).toMatch(/does not exist in the sibling checkout/)
     expect(validateSource('grove/ alone', present).error).toMatch(/names a repo but no file/)
+    // a workspace that keeps the immediately-run- prefixed directory resolves both spellings
+    const prefixed = tempRepo()
+    const docsIn = join(prefixed, 'docs')
+    mkdirSync(docsIn, { recursive: true })
+    mkdirSync(join(prefixed, 'immediately-run-sdk', 'src'), { recursive: true })
+    writeFileSync(join(prefixed, 'immediately-run-sdk', 'src', 'vcs.ts'), 'export const v = 1\n')
+    expect(validateSource('sdk/src/vcs.ts cites', docsIn)).toEqual({ ok: true })
+    expect(validateSource('immediately-run-sdk/src/GONE.ts cites', docsIn).error).toMatch(/does not exist in the sibling checkout/)
   })
 
   it('a source that names a repo but no file under it is an error', () => {
@@ -239,6 +247,40 @@ describe('the checks', () => {
     const findings = await runOver(webStorageCheck, ['src/App.tsx'], dir)
     expect(findings.map((f) => f.detail).sort()).toEqual(['caches', 'localStorage', 'sessionStorage'])
     expect(findings.every((f) => f.file === 'src/App.tsx' && typeof f.line === 'number')).toBe(true)
+  })
+
+  it('web storage: type-space declarations bind — a use of a locally declared interface/type/enum named like a banned global is clean', async () => {
+    const dir = tempRepo()
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'src', 'types.ts'), [
+      'interface caches { size: number }',
+      'type localStorage = string',
+      'enum indexedDB { A, B }',
+      'export const t: caches = { size: 1 }',
+      'export const s: localStorage = "x"',
+      'export const e = indexedDB.A',
+    ].join('\n'))
+    const findings = await runOver(webStorageCheck, ['src/types.ts'], dir)
+    expect(findings).toEqual([])
+  })
+
+  it('web storage: destructuring judges the initializer — window destructures flag, local destructures do not', async () => {
+    const dir = tempRepo()
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'src', 'destructure.ts'), [
+      'const { localStorage } = window',
+      'const { sessionStorage: renamed } = globalThis',
+      'const props = { caches: 1, indexedDB: 2 }',
+      'const { caches: mine } = props',
+      'const { indexedDB } = props',
+      'export const out = { localStorage, renamed, mine, indexedDB }',
+    ].join('\n'))
+    const findings = await runOver(webStorageCheck, ['src/destructure.ts'], dir)
+    // line 1 reads window.localStorage (the shorthand name itself), line 2
+    // reads globalThis.sessionStorage, line 6 re-spreads the window-derived
+    // local (not a scope binding — its origin is the global read); lines 4-5
+    // read props' own properties and never appear.
+    expect(findings.map((f) => f.line).sort()).toEqual([1, 2, 6])
   })
 
   it('web storage: a member of a non-global receiver is that object\'s property, not the platform global', async () => {
@@ -350,6 +392,26 @@ describe('the runner and its ratchet', () => {
     const result = await runInvariants({ cwd: dir, name: 'scratch', kind: { core: false, app: true } })
     expect(result.registry.every((finding) => finding.includes('REGISTRY'))).toBe(true)
     expect(result.registry.some((finding) => finding.includes('app-main-tsx-inert'))).toBe(true)
+  })
+
+  it('a dead glob beside a live one is its own REGISTRY finding, named (per-glob rot, not per-entry)', async () => {
+    const dir = tempRepo()
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'App.tsx'), 'export default 1\n')
+    const { loadRegistry: load } = await import('../src/check-invariants.mjs')
+    const registry = load()
+    const entry = registry.entries.find((candidate) => candidate.id === 'app-no-web-storage')
+    const withDeadGlob = {
+      ...registry,
+      entries: registry.entries.map((candidate) =>
+        candidate === entry
+          ? { ...candidate, scope: { ...candidate.scope, paths: [...candidate.scope.paths, 'no/such/dir/**'] } }
+          : candidate,
+      ),
+    }
+    const result = await runInvariants({ cwd: dir, name: 'grove', kind: { core: false, app: true }, registry: withDeadGlob })
+    expect(result.registry.some((finding) => finding.includes("glob(s) [no/such/dir/**] match no file"))).toBe(true)
+    expect(result.registry.some((finding) => finding.includes('match no file in grove (scope') && finding.includes('app-no-web-storage: paths'))).toBe(false)
   })
 
   it('an in-scope REVIEW entry whose paths match nothing is a REGISTRY finding too (rot has no enforcement exception)', async () => {

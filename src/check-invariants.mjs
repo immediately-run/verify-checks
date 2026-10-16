@@ -179,8 +179,14 @@ export function validateSource(source, docsRoot) {
       return { error: `"${source}" names a repo but no file in it` }
     }
     const workspaceRoot = dirname(docsRoot || PACKAGE_ROOT)
-    const sibling = join(workspaceRoot, repo.replace(/^immediately-run-/, ''))
-    if (!existsSync(sibling)) {
+    // Workspaces keep either spelling for a checkout's directory (grove,
+    // immediately-run-sdk); try the name as given first, then folded, then
+    // prefixed — first existing directory wins.
+    const candidates = [repo, repo.replace(/^immediately-run-/, ''), `immediately-run-${repo}`]
+    const sibling = candidates
+      .map((candidate) => join(workspaceRoot, candidate))
+      .find((directory) => existsSync(directory))
+    if (!sibling) {
       return { warn: `repo file ${repo}/${path} unchecked — sibling checkout ${repo} absent` }
     }
     return existsSync(join(sibling, path))
@@ -365,16 +371,25 @@ export async function runInvariants({ cwd, name, kind, registry = loadRegistry()
   for (const entry of registry.entries) {
     if (!scopeMatches(entry, { name, kind })) continue
     // Scope rot is checked for EVERY in-scope entry, review-enforced ones
-    // included: a glob that matches nothing is a registry defect whatever
-    // enforces the invariant (R3-1173 serves review entries from the same
-    // paths).
-    const files = await entryFiles(entry, cwd)
-    if (files.length === 0) {
+    // included, and PER GLOB: the item's rule is "a `paths` glob that
+    // matches no file in a repo in scope is a finding" — a dead glob beside
+    // a live one must not hide inside the union.
+    const rotted = []
+    for (const pattern of entry.scope.paths) {
+      if ((await entryFiles({ scope: { paths: [pattern] } }, cwd)).length === 0) rotted.push(pattern)
+    }
+    if (rotted.length === entry.scope.paths.length) {
       registryFindings.push(
         `REGISTRY ${entry.id}: paths [${entry.scope.paths.join(', ')}] match no file in ${name} (scope ${JSON.stringify(entry.scope.repos)}) — the scope or the repo shape rotted`,
       )
       continue
     }
+    if (rotted.length > 0) {
+      registryFindings.push(
+        `REGISTRY ${entry.id}: glob(s) [${rotted.join(', ')}] match no file in ${name} — a live glob beside them does not excuse a dead one`,
+      )
+    }
+    const files = await entryFiles(entry, cwd)
     if (entry.enforcement === 'review') {
       review.push(entry.id)
       continue

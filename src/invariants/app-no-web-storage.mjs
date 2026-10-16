@@ -70,8 +70,27 @@ function referencesGlobal(node, ts, bound) {
   if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
     return ts.isIdentifier(parent.expression) && GLOBAL_RECEIVERS.includes(parent.expression.text)
   }
+  if (ts.isBindingElement(parent)) {
+    // A destructuring element READS the property its propertyName names (or,
+    // shorthand, the name it also binds) off the pattern's initializer:
+    // `{ localStorage: ls } = window` and `{ localStorage } = window` both
+    // read window.localStorage; `{ caches: mine } = props` reads a local
+    // object's property and is none of this check's business.
+    if (parent.name !== node && parent.propertyName !== node) return false
+    return destructuresFromGlobalReceiver(parent, ts)
+  }
   if (isNamePosition(node, ts)) return false
   return !bound.has(node.text)
+}
+
+/** The ObjectBindingPattern's initializer: one of the GLOBAL_RECEIVERS,
+ *  bare — the global receivers the member rule uses. */
+function destructuresFromGlobalReceiver(bindingElement, ts) {
+  const pattern = bindingElement.parent
+  const holder = pattern && pattern.parent
+  const initializer = holder &&
+    (ts.isVariableDeclaration(holder) || ts.isParameter(holder)) ? holder.initializer : undefined
+  return !!initializer && ts.isIdentifier(initializer) && GLOBAL_RECEIVERS.includes(initializer.text)
 }
 
 /** Declaring/labeling positions: the parent uses the Identifier as its
@@ -103,8 +122,13 @@ function isNamePosition(node, ts) {
 }
 
 /** Scope bindings: declarations that introduce a NAME the file can then
- *  speak of. An object-literal key is NOT one. A destructuring element's
- *  propertyName READS (`{ localStorage: x } = window`) and does not bind. */
+ *  speak of — value-space (variables, parameters, functions, classes,
+ *  imports) and type-space (enums, interfaces, type aliases, type
+ *  parameters, modules) alike: a use of a locally declared type named
+ *  `caches` is the file's own type. An object-literal key is NOT one. A
+ *  destructuring element destructuring a NON-global initializer binds its
+ *  name (and reads only a local property); one destructuring a global
+ *  receiver reads the platform global and is left to referencesGlobal. */
 function isScopeBinding(node, ts) {
   const parent = node.parent
   const binds =
@@ -115,12 +139,19 @@ function isScopeBinding(node, ts) {
     ts.isFunctionExpression(parent) ||
     ts.isClassDeclaration(parent) ||
     ts.isClassExpression(parent) ||
+    ts.isEnumDeclaration(parent) ||
+    ts.isInterfaceDeclaration(parent) ||
+    ts.isTypeAliasDeclaration(parent) ||
+    ts.isTypeParameterDeclaration(parent) ||
+    ts.isModuleDeclaration(parent) ||
     ts.isImportSpecifier(parent) ||
     ts.isImportClause(parent) ||
     ts.isNamespaceImport(parent) ||
     ts.isCatchClause(parent)
   if (!binds) return false
-  if (ts.isBindingElement(parent)) return parent.name === node && parent.propertyName !== node
+  if (ts.isBindingElement(parent)) {
+    return parent.name === node && !destructuresFromGlobalReceiver(parent, ts)
+  }
   if (ts.isImportSpecifier(parent)) return parent.name === node
   return parent.name === node
 }
