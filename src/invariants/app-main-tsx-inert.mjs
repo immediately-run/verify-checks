@@ -1,28 +1,30 @@
-// app-main-tsx-inert — src/main.tsx exists for local dev/build only; the
-// platform renders the default export of src/App.tsx and IGNORES main.tsx at
-// runtime (app CLAUDE.md hard rules 1–2). Anything the rendered tree needs —
-// global CSS imports, providers, app logic — must be reachable from
-// App.tsx, so a CSS import or an SDK import in main.tsx is dead weight that
-// looks load-bearing: it works on the local dev server and silently does
-// nothing in production.
+// app-main-tsx-inert — invariant registry entry (R3-1170): the local dev
+// entry stays inert. It imports no CSS file (global CSS belongs in the entry
+// the platform renders — App.tsx or the package.json "main") and nothing
+// from the @immediately-run/sdk PACKAGE ROOT: the root reaches for the host
+// transport at module load and throws under vite dev, while the narrow
+// subpaths are exactly what main.tsx is supposed to import (R3-553:
+// `@immediately-run/sdk/boot`, `/routing`, `/urlUtils`, …). Banning the
+// whole namespace would flag every compliant app — the check therefore
+// flags only the bare-root spellings.
 //
 // Module specifiers are read from the parse tree (ImportDeclaration /
 // ExportDeclaration module specifiers, plus dynamic import() and require()
 // call arguments), never by scanning text for quoted strings.
 
 const CSS_SPECIFIER = /\.css$/
-const SDK_PREFIX = '@immediately-run/sdk'
+const SDK_ROOT = '@immediately-run/sdk'
 
-function specifierFinding(file, line, specifier) {
-  const reason = CSS_SPECIFIER.test(specifier)
-    ? 'a CSS import — global CSS belongs in App.tsx, which the platform renders'
-    : `an @immediately-run/sdk import — providers and app logic belong in App.tsx, which the platform renders`
-  return {
-    file,
-    line,
-    detail: specifier,
-    message: `src/main.tsx imports ${specifier} (${reason})`,
-  }
+/** Only the package-root spellings are banned; deeper subpaths (sdk/boot,
+ *  sdk/routing, …) are the prescribed shape R3-553 names. */
+export function isSdkRoot(specifier) {
+  return specifier === SDK_ROOT || specifier === `${SDK_ROOT}/`
+}
+
+export function reasonFor(specifier) {
+  return CSS_SPECIFIER.test(specifier)
+    ? 'a CSS import — global CSS belongs in the entry the platform renders'
+    : 'the SDK package root — it reaches for the host transport at module load and throws under vite dev; import a narrow subpath (R3-553)'
 }
 
 export async function check({ cwd, files, getTs }) {
@@ -35,16 +37,22 @@ export async function check({ cwd, files, getTs }) {
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
     const flag = (node, specifierNode) => {
       const specifier = specifierNode.text
-      if (CSS_SPECIFIER.test(specifier) || specifier.startsWith(SDK_PREFIX)) {
-        const { line } = source.getLineAndCharacterOfPosition(node.getStart(source))
-        findings.push(specifierFinding(file, line + 1, specifier))
-      }
+      const { line } = source.getLineAndCharacterOfPosition(node.getStart(source))
+      findings.push({
+        file,
+        line: line + 1,
+        detail: specifier,
+        message: `src/main.tsx imports ${specifier} (${reasonFor(specifier)})`,
+      })
     }
+    const banned = (specifierNode) =>
+      ts.isStringLiteral(specifierNode) &&
+      (CSS_SPECIFIER.test(specifierNode.text) || isSdkRoot(specifierNode.text))
     const visit = (node) => {
       if (
         (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
         node.moduleSpecifier !== undefined &&
-        ts.isStringLiteral(node.moduleSpecifier)
+        banned(node.moduleSpecifier)
       ) {
         flag(node, node.moduleSpecifier)
       } else if (
@@ -52,7 +60,7 @@ export async function check({ cwd, files, getTs }) {
         ((node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
           (ts.isIdentifier(node.expression) && node.expression.text === 'require')) &&
         node.arguments.length >= 1 &&
-        ts.isStringLiteral(node.arguments[0])
+        banned(node.arguments[0])
       ) {
         flag(node, node.arguments[0])
       }

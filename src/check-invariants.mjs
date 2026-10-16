@@ -172,7 +172,12 @@ export function validateSource(source, docsRoot) {
   }
   if (source.includes('/')) {
     // <repo>/<path> … — a file in a sibling checkout; annotated tails are prose.
-    const [repo, path] = source.split(/\s+/, 2)[0].split('/')
+    const token = source.split(/\s+/, 2)[0]
+    const [repo, ...rest] = token.split('/')
+    const path = rest.join('/')
+    if (path === '') {
+      return { error: `"${source}" names a repo but no file in it` }
+    }
     const workspaceRoot = dirname(docsRoot || PACKAGE_ROOT)
     const sibling = join(workspaceRoot, repo.replace(/^immediately-run-/, ''))
     if (!existsSync(sibling)) {
@@ -335,8 +340,11 @@ export function findDocsRoot(cwd) {
 
 /** The findings fingerprints: `${id}|${file}|${detail}`. No line numbers —
  *  moving code does not change a finding's identity (the comment-refs
- *  precedent); the detail keeps two violations of one invariant in one file
- *  from collapsing into one baselined entry. */
+ *  precedent); the detail (the identifier, the specifier, the URL, the lone
+ *  secret) is the discriminator, so violations with DIFFERENT details in one
+ *  file stay distinct. Two occurrences of the same detail in one file share
+ *  one fingerprint by design: the (file, detail) pair is the debt unit a
+ *  baseline absorbs, not the occurrence count. */
 export function findingFingerprint(id, finding) {
   return fingerprint(`${id}|${finding.file}|${finding.detail}`)
 }
@@ -356,6 +364,17 @@ export async function runInvariants({ cwd, name, kind, registry = loadRegistry()
   }
   for (const entry of registry.entries) {
     if (!scopeMatches(entry, { name, kind })) continue
+    // Scope rot is checked for EVERY in-scope entry, review-enforced ones
+    // included: a glob that matches nothing is a registry defect whatever
+    // enforces the invariant (R3-1173 serves review entries from the same
+    // paths).
+    const files = await entryFiles(entry, cwd)
+    if (files.length === 0) {
+      registryFindings.push(
+        `REGISTRY ${entry.id}: paths [${entry.scope.paths.join(', ')}] match no file in ${name} (scope ${JSON.stringify(entry.scope.repos)}) — the scope or the repo shape rotted`,
+      )
+      continue
+    }
     if (entry.enforcement === 'review') {
       review.push(entry.id)
       continue
@@ -363,13 +382,6 @@ export async function runInvariants({ cwd, name, kind, registry = loadRegistry()
     const refusal = await selfTestEntry(entry, { fixtureRoot })
     if (refusal) {
       registryFindings.push(`${entry.id}: ${refusal}`)
-      continue
-    }
-    const files = await entryFiles(entry, cwd)
-    if (files.length === 0) {
-      registryFindings.push(
-        `REGISTRY ${entry.id}: paths [${entry.scope.paths.join(', ')}] match no file in ${name} (scope ${JSON.stringify(entry.scope.repos)}) — the scope or the repo shape rotted`,
-      )
       continue
     }
     const findings = await CHECK_MODULES[entry.id].check({

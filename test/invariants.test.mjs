@@ -195,6 +195,16 @@ describe('source validation (validateSource over a synthetic docs checkout)', ()
     writeFileSync(join(workspace, 'grove', 'CLAUDE.md'), '# grove\n')
     expect(validateSource('grove/CLAUDE.md Hard rules 6', present)).toEqual({ ok: true })
     expect(validateSource('grove/GONE.md Hard rules 6', present).error).toMatch(/does not exist in the sibling checkout/)
+    // nested paths validate the WHOLE path, not only the first directory
+    mkdirSync(join(workspace, 'grove', 'src', 'lib'), { recursive: true })
+    writeFileSync(join(workspace, 'grove', 'src', 'lib', 'theme.ts'), 'export const t = 1\n')
+    expect(validateSource('grove/src/lib/theme.ts cites', present)).toEqual({ ok: true })
+    expect(validateSource('grove/src/lib/GONE.ts cites', present).error).toMatch(/does not exist in the sibling checkout/)
+    expect(validateSource('grove/ alone', present).error).toMatch(/names a repo but no file/)
+  })
+
+  it('a source that names a repo but no file under it is an error', () => {
+    expect(validateSource('grove/', null)).toEqual({ error: '"grove/" names a repo but no file in it' })
   })
 
   it('an unrecognised source shape is an error, never a silent pass', () => {
@@ -249,6 +259,13 @@ describe('the checks', () => {
     expect(findings.map((f) => f.detail)).toEqual(['sessionStorage'])
   })
 
+  it('main.tsx: the message names which rule each specifier broke', async () => {
+    const { reasonFor } = await import('../src/invariants/app-main-tsx-inert.mjs')
+    expect(reasonFor('./app.css')).toMatch(/CSS import/)
+    expect(reasonFor('@immediately-run/sdk')).toMatch(/package root/)
+    expect(reasonFor('@immediately-run/sdk/boot')).toMatch(/package root/)
+  })
+
   it('main.tsx: CSS and SDK imports found (static and dynamic), App imports not', async () => {
     const dir = tempRepo()
     mkdirSync(join(dir, 'src'))
@@ -257,15 +274,26 @@ describe('the checks', () => {
       "import './app.css'",
       "import { openSettings } from '@immediately-run/sdk'",
       "import App from './App'",
-      'const lazy = () => import("@immediately-run/sdk/openSettings")',
+      'const lazy = () => import("@immediately-run/sdk/boot")',
       'void lazy; void StrictMode; void App',
     ].join('\n'))
     const findings = await runOver(mainTsxCheck, ['src/main.tsx'], dir)
-    expect(findings.map((f) => f.detail).sort()).toEqual([
-      './app.css',
-      '@immediately-run/sdk',
-      '@immediately-run/sdk/openSettings',
-    ])
+    expect(findings.map((f) => f.detail).sort()).toEqual(['./app.css', '@immediately-run/sdk'])
+  })
+
+  it('main.tsx: the sdk package root is banned with and without a trailing slash; subpaths are not', async () => {
+    const dir = tempRepo()
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'src', 'main.tsx'), [
+      "import { boot } from '@immediately-run/sdk/boot'",
+      "import { routing } from '@immediately-run/sdk/routing'",
+      "const root = () => import('@immediately-run/sdk')",
+      "const slashed = () => import('@immediately-run/sdk/')",
+      'void boot; void routing; void root; void slashed',
+    ].join('\n'))
+    const findings = await runOver(mainTsxCheck, ['src/main.tsx'], dir)
+    expect(findings.map((f) => f.detail).sort()).toEqual(['@immediately-run/sdk', '@immediately-run/sdk/'])
+    expect(findings.every((f) => /SDK package root/.test(f.message))).toBe(true)
   })
 
   it('css: both @import spellings carry the URL, local imports are clean', () => {
@@ -322,6 +350,24 @@ describe('the runner and its ratchet', () => {
     const result = await runInvariants({ cwd: dir, name: 'scratch', kind: { core: false, app: true } })
     expect(result.registry.every((finding) => finding.includes('REGISTRY'))).toBe(true)
     expect(result.registry.some((finding) => finding.includes('app-main-tsx-inert'))).toBe(true)
+  })
+
+  it('an in-scope REVIEW entry whose paths match nothing is a REGISTRY finding too (rot has no enforcement exception)', async () => {
+    const dir = tempRepo()
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'scratch' }))
+    // site-main is in scope of e02/e25/e29 (paths src/**) — no src/ here
+    const result = await runInvariants({ cwd: dir, name: 'site-main', kind: { core: true, app: false } })
+    expect(result.registry.some((finding) => finding.includes('REGISTRY e02'))).toBe(true)
+    expect(result.review).toEqual([])
+  })
+
+  it('a protocol-relative @import is the same remote finding', async () => {
+    const dir = tempRepo()
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'index.css'), "@import '//cdn.example.com/typo.css';\n")
+    const { check } = await import('../src/invariants/app-no-remote-css-import.mjs')
+    const findings = await check({ cwd: dir, files: ['src/index.css'] })
+    expect(findings.map((f) => f.detail)).toEqual(['//cdn.example.com/typo.css'])
   })
 
   it('the CLI runs end to end over this repo', () => {
@@ -475,6 +521,8 @@ describe('loud failure paths', () => {
   it('review entries in scope are announced, not run', async () => {
     const dir = tempRepo()
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x' }))
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'index.ts'), 'export const x = 1\n')
     mkdirSync(join(dir, '.github', 'workflows'), { recursive: true })
     writeFileSync(join(dir, '.github', 'workflows', 'ci.yml'), 'name: ci\non: push\n')
     const logs = []

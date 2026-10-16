@@ -8,15 +8,29 @@ import { join } from 'node:path'
 // typeof guard cannot catch it — the throw is on property access, not on
 // the value. State goes to the SDK's openLocalStore()/openSettings().
 //
-// "Identifier reference" means an Identifier node in the TypeScript AST: a
-// bare mention (caches.keys()), or a member of the global receivers
-// window/globalThis/self (window.sessionStorage). Strings, comments and
-// template literals never parse as identifiers; a property named the same
-// on some other object (props.caches) or a declaring position (an
-// object-literal key, a JSX attribute) is not a reference. A dynamically
-// spelled access (window['local' + 'Storage']) or an aliased receiver is
-// invisible to this check — by design; the rule is about not spelling the
-// identifier at all.
+// "Identifier reference" is decided over the parse tree (the TypeScript
+// AST, never a text scan — strings, comments and template literals do not
+// parse as identifiers), in two parts:
+//
+//   SYNTAX — a bare mention references; a member access references only on
+//     a global receiver (window.sessionStorage — the receiver names the
+//     global even where a local shadows the member name); props.caches is
+//     that object's property, and the check has no type information to
+//     tell receivers apart by kind; a declaring position (an object key, a
+//     class/interface member, a JSX attribute, an import renaming token)
+//     binds or labels — it references nothing.
+//   SCOPE — a bare mention of a name the file BINDS (a variable, a
+//     parameter, a function/class/enum/interface/type name, an import
+//     binding, a destructuring binding, a catch variable) is the file's
+//     own local, never the platform global. File-granular by design: a
+//     full scope walk would re-derive the binder, and a banned name bound
+//     anywhere in an app file is that file's vocabulary, not the
+//     platform's. An object-literal KEY is not a binding — { caches: x }
+//     labels a property without shadowing anything.
+//
+// A dynamically-spelled access (window['local' + 'Storage']) or an aliased
+// receiver is invisible to this check — by design; the rule is about not
+// spelling the identifier at all.
 
 const BANNED = ['localStorage', 'sessionStorage', 'indexedDB', 'caches']
 const GLOBAL_RECEIVERS = ['window', 'globalThis', 'self']
@@ -28,47 +42,45 @@ export function check({ cwd, files, getTs }) {
     if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(file)) continue
     const text = readFileSync(join(cwd, file), 'utf8')
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
-    walk(source, file, ts, findings)
+    const bound = new Set()
+    collectBoundNames(source, ts, bound)
+    const visit = (node) => {
+      if (ts.isIdentifier(node) && BANNED.includes(node.text) && referencesGlobal(node, ts, bound)) {
+        const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
+        findings.push({
+          file,
+          line,
+          detail: node.text,
+          message: `${node.text} is unavailable at an opaque origin (even reading it throws SecurityError) — use openLocalStore()/openSettings() from the SDK`,
+        })
+      }
+      node.forEachChild(visit)
+    }
+    source.forEachChild(visit)
   }
   return findings
 }
 
-function walk(node, file, ts, findings) {
-  if (ts.isIdentifier(node) && BANNED.includes(node.text) && !isDeclarationName(node, ts) && isGlobalReference(node, ts)) {
-    const source = node.getSourceFile()
-    const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
-    findings.push({
-      file,
-      line,
-      detail: node.text,
-      message: `${node.text} is unavailable at an opaque origin (even reading it throws SecurityError) — use openLocalStore()/openSettings() from the SDK`,
-    })
-  }
-  node.forEachChild((child) => walk(child, file, ts, findings))
-}
-
-/** A banned identifier counts when spelled bare (caches.keys()) or as a
- *  member of a global receiver (window.sessionStorage). A member of any
- *  other object (props.caches, config.localStorage) is that object's
- *  property, not the platform global — flagging it would be noise, and the
- *  check runs with no type information to tell receivers apart by kind. */
-function isGlobalReference(node, ts) {
-  const parent = node.parent
-  if (parent && ts.isPropertyAccessExpression(parent) && parent.name === node) {
-    return ts.isIdentifier(parent.expression) && GLOBAL_RECEIVERS.includes(parent.expression.text)
-  }
-  return true
-}
-
-/** Declaration-shaped positions: an Identifier that names an object-literal
- *  key, a class/interface/enum member, a method/accessor, or a JSX attribute
- *  declares the name, it does not reference the global. Computed names are
- *  not plain Identifier nodes in these positions, so the name check already
- *  excludes them. */
-function isDeclarationName(node, ts) {
+/** Does this Identifier reference the platform global? See the header:
+ *  syntax first (what references at all), scope second (what the file
+ *  binds). */
+function referencesGlobal(node, ts, bound) {
   const parent = node.parent
   if (!parent) return false
-  const namesIt = ts.isPropertyAssignment(parent) ||
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
+    return ts.isIdentifier(parent.expression) && GLOBAL_RECEIVERS.includes(parent.expression.text)
+  }
+  if (isNamePosition(node, ts)) return false
+  return !bound.has(node.text)
+}
+
+/** Declaring/labeling positions: the parent uses the Identifier as its
+ *  .name (or an import specifier's propertyName, which renames the
+ *  module's export). Computed names are not plain Identifiers here. */
+function isNamePosition(node, ts) {
+  const parent = node.parent
+  const namesWith =
+    ts.isPropertyAssignment(parent) ||
     ts.isPropertyDeclaration(parent) ||
     ts.isPropertySignature(parent) ||
     ts.isMethodDeclaration(parent) ||
@@ -76,6 +88,44 @@ function isDeclarationName(node, ts) {
     ts.isGetAccessorDeclaration(parent) ||
     ts.isSetAccessorDeclaration(parent) ||
     ts.isEnumMember(parent) ||
-    ts.isJsxAttribute(parent)
-  return namesIt && parent.name === node
+    ts.isEnumDeclaration(parent) ||
+    ts.isInterfaceDeclaration(parent) ||
+    ts.isTypeAliasDeclaration(parent) ||
+    ts.isTypeParameterDeclaration(parent) ||
+    ts.isModuleDeclaration(parent) ||
+    ts.isJsxAttribute(parent) ||
+    ts.isImportSpecifier(parent) ||
+    ts.isNamespaceImport(parent) ||
+    ts.isImportClause(parent)
+  if (namesWith && parent.name === node) return true
+  if (ts.isImportSpecifier(parent) && parent.propertyName === node) return true
+  return false
+}
+
+/** Scope bindings: declarations that introduce a NAME the file can then
+ *  speak of. An object-literal key is NOT one. A destructuring element's
+ *  propertyName READS (`{ localStorage: x } = window`) and does not bind. */
+function isScopeBinding(node, ts) {
+  const parent = node.parent
+  const binds =
+    ts.isVariableDeclaration(parent) ||
+    ts.isBindingElement(parent) ||
+    ts.isParameter(parent) ||
+    ts.isFunctionDeclaration(parent) ||
+    ts.isFunctionExpression(parent) ||
+    ts.isClassDeclaration(parent) ||
+    ts.isClassExpression(parent) ||
+    ts.isImportSpecifier(parent) ||
+    ts.isImportClause(parent) ||
+    ts.isNamespaceImport(parent) ||
+    ts.isCatchClause(parent)
+  if (!binds) return false
+  if (ts.isBindingElement(parent)) return parent.name === node && parent.propertyName !== node
+  if (ts.isImportSpecifier(parent)) return parent.name === node
+  return parent.name === node
+}
+
+function collectBoundNames(node, ts, bound) {
+  if (ts.isIdentifier(node) && isScopeBinding(node, ts)) bound.add(node.text)
+  node.forEachChild((child) => collectBoundNames(child, ts, bound))
 }

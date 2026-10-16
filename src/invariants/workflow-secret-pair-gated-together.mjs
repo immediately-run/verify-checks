@@ -4,7 +4,7 @@ import YAML from 'yaml'
 
 // workflow-secret-pair-gated-together — invariant registry entry (R3-1170):
 // a workflow `if:` that references one member of a declared secret pair must
-// reference both. The fleet defect behind it (34 escaped findings-log rows,
+// reference both. The fleet defect behind it (44 escaped findings-log rows,
 // escape E01): the replicated cache.yml gated the Pages-token mint on
 // DEPLOY_APP_ID alone, so an id present with the private key absent ran the
 // mint with an empty key and aborted before the github.token fallback.

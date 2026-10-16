@@ -36,7 +36,8 @@
     "test": "vitest run",
     "check:untested": "node scripts/check-untested.mjs",
     "check:publish-version": "node scripts/check-publish-version.mjs --self-test && node scripts/check-publish-version.mjs",
-    "check:comment-refs": "node scripts/check-comment-refs.mjs"
+    "check:comment-refs": "node scripts/check-comment-refs.mjs",
+    "verify": "npm test && npm run check:untested && npm run check:comment-refs && npm run check:publish-version"
   },
   "dependencies": {
     "fast-glob": "3.3.3",

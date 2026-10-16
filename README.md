@@ -5,7 +5,7 @@ Deterministic quality checks shared by the immediately.run core repos
 pinned dependency and driven by each repo's ten-line `scripts/check-*.mjs`
 wrapper.
 
-Seven checks, one ratchet, one registry:
+Eight checks, one ratchet, one registry:
 
 | check | producer | baseline fingerprint |
 |---|---|---|
@@ -83,7 +83,7 @@ is every repo. An in-scope entry whose `paths` match no file is a REGISTRY
 finding — scope rot is a registry defect, never baseline debt. The four
 initial checks are the app hard rules (`app-no-web-storage`,
 `app-main-tsx-inert`, `app-no-remote-css-import`) and
-`workflow-secret-pair-gated-together` (the 34-row `cache.yml` escape,
+`workflow-secret-pair-gated-together` (the 44-row `cache.yml` escape,
 whose violating fixture is the real pre-fix `cache.yml` cited in its README);
 the `det-repo` escape records are seeded as `review` entries. R3-1171 runs
 the registry fleet-wide; R3-1173 builds reviewer context packs from it.

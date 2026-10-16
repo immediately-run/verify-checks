@@ -19,9 +19,10 @@
     },
     {
       "id": "app-main-tsx-inert",
-      "statement": "src/main.tsx is for local dev/build only: it imports no CSS file and nothing from @immediately-run/sdk — anything the rendered tree needs must be reachable from src/App.tsx, which the platform renders.",
+      "statement": "src/main.tsx is for local dev/build only: it imports no CSS file and nothing from the @immediately-run/sdk package root — subpath imports (sdk/boot et al.) are the prescribed shape (R3-553).",
       "sources": [
-        "grove/CLAUDE.md Hard rules 1-2"
+        "grove/CLAUDE.md Hard rules 1-2",
+        "R3-553"
       ],
       "scope": {
         "repos": "apps",
@@ -34,7 +35,7 @@
     },
     {
       "id": "app-no-remote-css-import",
-      "statement": "No @import of an http(s) URL in src/**/*.css — a remote font or stylesheet breaks offline in every stance and is blocked under compiled dispatch; fonts are declared assets the engine resolves.",
+      "statement": "No @import of a remote URL in src/**/*.css — http(s) or protocol-relative; it breaks offline in every stance and is blocked under compiled dispatch. Fonts are declared assets the engine resolves.",
       "sources": [
         "R3-315",
         "grove/CLAUDE.md Hard rules 6"
@@ -277,15 +278,18 @@
       ],
       "scope": {
         "repos": [
-          "landing-page",
           "sdk",
           "sandbox",
           "site-main",
           "backend",
+          "sandpack",
           "cli"
         ],
         "paths": [
-          "src/**"
+          "src/**",
+          "DEPRECATION_CANDIDATES.md",
+          "CODE_SPEC_REFERENCES.md",
+          "REFACTOR_CANDIDATES.md"
         ]
       },
       "enforcement": "review",

@@ -1,5 +1,5 @@
-// The violating half of the self-test pair: every shape here is a real
-// identifier reference to a banned global.
+// The violating half of the self-test pair: every real identifier reference
+// to a banned global. The binding positions are the clean fixture's half.
 export default function App() {
   const token = localStorage.getItem('token');
   window.sessionStorage.setItem('seen', '1');
