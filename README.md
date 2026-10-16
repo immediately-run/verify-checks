@@ -5,7 +5,7 @@ Deterministic quality checks shared by the immediately.run core repos
 pinned dependency and driven by each repo's ten-line `scripts/check-*.mjs`
 wrapper.
 
-Seven checks, one ratchet:
+Seven checks, one ratchet, one registry:
 
 | check | producer | baseline fingerprint |
 |---|---|---|
@@ -16,6 +16,7 @@ Seven checks, one ratchet:
 | `check-tokens` | postcss + postcss-value-parser declaration walk; lexical `var()` scan of sources | `undeclared\|file\|--name` for a `var()` no scanned CSS declares (a fallback does not excuse it); `literal\|file\|selector\|property\|literal` for a colour literal outside a custom-property declaration; `stale-allow\|--name` for a rotten allow entry |
 | `check-sweep` (`./sweep`) | pure geometry judges over a `LayoutSnapshot` collected in the consumer's browser | `overflow-x\|route\|vp`; `offscreen\|route\|vp\|control`; `occluded\|route\|vp\|control`; `target-small\|route\|vp\|control`; `wrapped\|route\|vp\|control`; `overlay-offscreen\|route\|vp\|trigger`; `overlay-clipped\|route\|vp\|trigger`; `overlay-detached\|route\|vp\|trigger`; `empty\|route\|vp\|controls` and `overlay-missing\|route\|vp\|trigger` so a broken selector turns red |
 | `check-comment-refs` (`./comment-refs`) | TypeScript scanner (`skipTrivia: false`, with the parser's template-substitution re-scan reimplemented) for comment ranges + an AST walk (`ts.isIdentifier`) for the code's identifier set | `file\|span` for a backticked span in a comment that names no existing path/identifier; `stale-allow\|name` for an allow entry no comment cites |
+| `check-invariants` (`./invariants`, R3-1170) | the invariant registry at `invariants/registry.json`: one entry per invariant, parsed sources (TypeScript AST for `src/**`, postcss + postcss-value-parser for CSS, the `yaml` package for workflows), self-test fixtures re-proved on every run | `${id}\|file\|detail` (sha256-16) per finding, ratcheted against `verify-baselines/invariants.json`; REGISTRY defects (scope rot, failed self-tests) are never baselined |
 
 `check-untested`'s coverage mode (opted-in repos) asks the question the name
 check cannot: are the CHANGED lines executed by the test run? The consumer's
@@ -55,6 +56,37 @@ fingerprint missing from the baseline fails the check; a baseline entry that
 no longer matches anything fails it too, naming the entry. `--write-baseline`
 exists only for the first commit and refuses to run when the file already
 exists — a regenerated golden asserts nothing.
+
+## The invariant registry (R3-1170)
+
+An invariant is a statement that holds across a scope, with its sources and
+its enforcement: a **self-tested check** (code in `src/invariants/<id>.mjs`
+with `violating`/`clean` fixtures under `test/invariants/<id>/` that the
+runner re-proves on every run — a broken check can never pass silently) or a
+**review-enforced line** (no code; R3-1173 serves those to reviewers). The
+registry lives at `invariants/registry.json`, one entry per invariant:
+
+```
+{ "id": "app-no-web-storage",
+  "statement": "…≤300 chars…",
+  "sources": ["R3-315", "escape-classification E01", "findings-log 2026-09-15", "grove/CLAUDE.md Hard rules 8"],
+  "scope": { "repos": "core"|"apps"|"all"|[names], "paths": ["src/**"] },
+  "enforcement": "check"|"review", "class?": "defect-class slug", "added": "2026-10-16" }
+```
+
+`sources` are validated (item ids, docs paths, escape-classification records
+and findings-log dates against a sibling docs checkout when one exists; a
+repo file against the sibling repo) and an entry without sources is refused.
+`core` is the five core repos by name; `apps` is any repo whose root
+`package.json` has an `immediately.run` key or that has `src/App.tsx`; `all`
+is every repo. An in-scope entry whose `paths` match no file is a REGISTRY
+finding — scope rot is a registry defect, never baseline debt. The four
+initial checks are the app hard rules (`app-no-web-storage`,
+`app-main-tsx-inert`, `app-no-remote-css-import`) and
+`workflow-secret-pair-gated-together` (the 34-row `cache.yml` escape,
+whose violating fixture is the real pre-fix `cache.yml` cited in its README);
+the `det-repo` escape records are seeded as `review` entries. R3-1171 runs
+the registry fleet-wide; R3-1173 builds reviewer context packs from it.
 
 Nothing here renders, fetches, or needs a browser; every check fails loudly
 naming what it could not determine (a missing `origin/main`, a missing tool,
