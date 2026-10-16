@@ -1,6 +1,6 @@
 {
   "name": "@immediately-run/verify-checks",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Deterministic quality checks shared by the immediately.run core repos: clones (jscpd), unused exports (knip), untested logic (git merge-base + Untested trailers; coverage mode: changed lines must be executed), dead CSS, tokens (undeclared var() references and raw colour literals), layout sweep (pure geometry judges over collected boxes). Baselines are fingerprint sets that only shrink.",
   "license": "UNLICENSED",
   "repository": {
@@ -23,24 +23,29 @@
     "./pr-facts": "./src/pr-facts.mjs",
     "./comment-refs": "./src/check-comment-refs.mjs",
     "./eslint-type-aware": "./src/eslint-type-aware.mjs",
-    "./review-gate": "./src/review-gate.mjs"
+    "./review-gate": "./src/review-gate.mjs",
+    "./invariants": "./src/check-invariants.mjs"
   },
   "files": [
     "src",
-    "bin"
+    "bin",
+    "invariants",
+    "test/invariants"
   ],
   "scripts": {
     "test": "vitest run",
     "check:untested": "node scripts/check-untested.mjs",
     "check:publish-version": "node scripts/check-publish-version.mjs --self-test && node scripts/check-publish-version.mjs",
-    "check:comment-refs": "node scripts/check-comment-refs.mjs"
+    "check:comment-refs": "node scripts/check-comment-refs.mjs",
+    "verify": "npm test && npm run check:untested && npm run check:comment-refs && npm run check:publish-version"
   },
   "dependencies": {
     "fast-glob": "3.3.3",
     "jscpd": "5.1.2",
     "knip": "6.34.0",
     "postcss": "8.5.28",
-    "postcss-value-parser": "4.2.0"
+    "postcss-value-parser": "4.2.0",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
@@ -49,11 +54,12 @@
     "typescript": "5.9.3",
     "typescript-ast": "npm:typescript@^5.9.3",
     "typescript-eslint": "8.62.1",
-    "vitest": "5.0.0",
-    "typescript-next": "npm:typescript@7.0.2"
+    "typescript-next": "npm:typescript@7.0.2",
+    "vitest": "5.0.0"
   },
   "bin": {
     "pr-facts": "./bin/pr-facts.mjs",
-    "review-gate": "./bin/review-gate.mjs"
+    "review-gate": "./bin/review-gate.mjs",
+    "check-invariants": "./bin/check-invariants.mjs"
   }
 }

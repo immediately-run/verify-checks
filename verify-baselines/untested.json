@@ -1,7 +1,7 @@
 {
   "format": "uncovered-lines-per-file/1",
   "files": {
-    "src/baseline.mjs": 5,
+    "src/baseline.mjs": 2,
     "src/check-clones.mjs": 2,
     "src/check-dead-css.mjs": 11,
     "src/check-tokens.mjs": 3,
