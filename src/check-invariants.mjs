@@ -127,7 +127,7 @@ export function loadRegistry(path = REGISTRY_PATH) {
  *  paths, escape-classification records and findings-log dates are checked
  *  when a sibling docs checkout exists (warned, not failed, when it does
  *  not); a sibling-repo file is checked when the sibling is checked out. */
-function validateSource(source, docsRoot) {
+export function validateSource(source, docsRoot) {
   if (typeof source !== 'string' || source.trim() === '') {
     return { error: 'a source must be a non-empty string' }
   }
@@ -273,8 +273,8 @@ export function entryFiles(entry, cwd) {
 /** One memoized TypeScript parser for the whole run, resolved like
  *  check-comment-refs resolves its scanner: the target repo's typescript
  *  first, then its typescript-ast alias, then this package's own alias. */
-export function parserProvider(cwd) {
-  const loaders = [
+export function parserProvider(cwd, loaders) {
+  const chain = loaders ?? [
     () => createRequire(join(cwd, 'package.json')),
     () => createRequire(import.meta.url),
   ].flatMap((req) => [
@@ -284,7 +284,7 @@ export function parserProvider(cwd) {
   let cached = null
   return () => {
     if (cached) return cached
-    for (const load of loaders) {
+    for (const load of chain) {
       try {
         const mod = load()
         if (mod && typeof mod.createSourceFile === 'function') {
@@ -303,11 +303,11 @@ export function parserProvider(cwd) {
 
 /** Run one check entry over a fixture tree and assert it behaves. Returns
  *  null when the fixtures behave, or the refusal reason. */
-export async function selfTestEntry(entry) {
+export async function selfTestEntry(entry, { fixtureRoot = FIXTURE_ROOT } = {}) {
   const module = CHECK_MODULES[entry.id]
   if (!module) return `src/invariants/${entry.id}.mjs does not exist`
   for (const [fixture, expectFindings] of [['violating', true], ['clean', false]]) {
-    const fixtureDir = join(FIXTURE_ROOT, entry.id, fixture)
+    const fixtureDir = join(fixtureRoot, entry.id, fixture)
     if (!existsSync(fixtureDir)) return `${fixture} fixture missing under test/invariants/${entry.id}/`
     const files = await entryFiles(entry, fixtureDir)
     const findings = await module.check({
@@ -344,8 +344,7 @@ export function findingFingerprint(id, finding) {
 /** Run every in-scope entry over `cwd`. Returns { run: [...findings with
  *  entry ids], registry: [...registry defects], review: [ids], warnings } —
  *  `registry` defects fail the run outright (never baselined). */
-export async function runInvariants({ cwd, name, kind }) {
-  const registry = loadRegistry()
+export async function runInvariants({ cwd, name, kind, registry = loadRegistry(), fixtureRoot }) {
   const { findings: registryFindings, warnings } = validateRegistry(registry, {
     docsRoot: findDocsRoot(cwd),
   })
@@ -361,7 +360,7 @@ export async function runInvariants({ cwd, name, kind }) {
       review.push(entry.id)
       continue
     }
-    const refusal = await selfTestEntry(entry)
+    const refusal = await selfTestEntry(entry, { fixtureRoot })
     if (refusal) {
       registryFindings.push(`${entry.id}: ${refusal}`)
       continue

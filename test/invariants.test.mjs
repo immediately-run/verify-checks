@@ -11,15 +11,17 @@ import {
   loadRegistry,
   normalizeRepoName,
   parserProvider,
+  repoNameFromGit,
   runInvariants,
   scopeMatches,
   selfTestEntry,
   validateRegistry,
+  validateSource,
 } from '../src/check-invariants.mjs'
 import { check as webStorageCheck } from '../src/invariants/app-no-web-storage.mjs'
 import { check as mainTsxCheck } from '../src/invariants/app-main-tsx-inert.mjs'
 import { remoteImportUrls } from '../src/invariants/app-no-remote-css-import.mjs'
-import { ifConditions, loneSecrets } from '../src/invariants/workflow-secret-pair-gated-together.mjs'
+import { check as workflowCheck, ifConditions, loneSecrets } from '../src/invariants/workflow-secret-pair-gated-together.mjs'
 import { readBaseline } from '../src/baseline.mjs'
 
 // R3-1170 — the invariant registry and its runner. The three anchors the
@@ -135,6 +137,70 @@ describe('scope', () => {
     writeFileSync(join(withApp, 'src', 'App.tsx'), 'export default function App() {}\n')
     expect(detectRepoKind(withApp, 'y')).toEqual({ core: false, app: true })
     expect(detectRepoKind(withApp, 'site-main')).toEqual({ core: true, app: true })
+  })
+})
+
+describe('source validation (validateSource over a synthetic docs checkout)', () => {
+  // A minimal docs checkout: one archived item, one live item, one escape
+  // record, one findings-log date, one content file. Every branch of the
+  // source grammar is driven against it (or its absence).
+  const makeDocs = () => {
+    const docs = tempRepo()
+    mkdirSync(join(docs, 'content', 'roadmap', 'archive'), { recursive: true })
+    writeFileSync(join(docs, 'content', 'roadmap', 'R3-2.mdx'), '---\nid: R3-2\n---\n')
+    writeFileSync(join(docs, 'content', 'roadmap', 'archive', 'R3-315.mdx'), '---\nid: R3-315\n---\n')
+    mkdirSync(join(docs, 'content', 'plans', 'review-gate'), { recursive: true })
+    writeFileSync(join(docs, 'content', 'plans', 'review-gate', 'pr-findings.mdx'), '| 2026-09-15 | x |\n')
+    mkdirSync(join(docs, 'content', 'specs'), { recursive: true })
+    writeFileSync(join(docs, 'content', 'specs', 'REAL.mdx'), 'real\n')
+    mkdirSync(join(docs, 'scripts', 'data'), { recursive: true })
+    writeFileSync(join(docs, 'scripts', 'data', 'escape-classification.json'), '[{"id":"E01"}]')
+    return docs
+  }
+
+  it('item ids resolve against live and archived roadmap items', () => {
+    const docs = makeDocs()
+    expect(validateSource('R3-2', docs)).toEqual({ ok: true })
+    expect(validateSource('R3-315', docs)).toEqual({ ok: true })
+    expect(validateSource('R3-999', docs)).toEqual({ error: 'item id R3-999 is neither a live nor an archived roadmap item' })
+    expect(validateSource('R3-999', null).warn).toMatch(/no sibling docs checkout/)
+  })
+
+  it('escape-classification records resolve against the data file', () => {
+    const docs = makeDocs()
+    expect(validateSource('escape-classification E01', docs)).toEqual({ ok: true })
+    expect(validateSource('escape-classification E99', docs)).toEqual({ error: 'escape record escape-classification E99 is not in scripts/data/escape-classification.json' })
+    mkdirSync(join(docs, 'scripts', 'data', 'broken'), { recursive: true })
+    writeFileSync(join(docs, 'scripts', 'data', 'escape-classification.json'), 'not json')
+    expect(validateSource('escape-classification E01', docs).error).toMatch(/not valid JSON/)
+  })
+
+  it('findings-log dates resolve against the log rows', () => {
+    const docs = makeDocs()
+    expect(validateSource('findings-log 2026-09-15', docs)).toEqual({ ok: true })
+    expect(validateSource('findings-log 2020-01-01', docs)).toEqual({ error: 'no findings-log row is dated 2020-01-01' })
+  })
+
+  it('docs paths resolve under content/, repo files against the sibling when it is checked out', () => {
+    const docs = makeDocs()
+    expect(validateSource('content/specs/REAL.mdx §4', docs)).toEqual({ ok: true })
+    expect(validateSource('docs/content/specs/GONE.mdx', docs)).toEqual({ error: 'docs path content/specs/GONE.mdx does not exist in the docs checkout' })
+    // grove is not a sibling in CI: warned, not failed
+    expect(validateSource('grove/CLAUDE.md rules', docs).warn).toMatch(/sibling checkout grove absent/)
+    // a sibling that IS present is checked, both ways
+    const workspace = tempRepo()
+    const present = join(workspace, 'docs')
+    mkdirSync(present, { recursive: true })
+    mkdirSync(join(workspace, 'grove'), { recursive: true })
+    writeFileSync(join(workspace, 'grove', 'CLAUDE.md'), '# grove\n')
+    expect(validateSource('grove/CLAUDE.md Hard rules 6', present)).toEqual({ ok: true })
+    expect(validateSource('grove/GONE.md Hard rules 6', present).error).toMatch(/does not exist in the sibling checkout/)
+  })
+
+  it('an unrecognised source shape is an error, never a silent pass', () => {
+    expect(validateSource('somewhere over the rainbow', null).error).toMatch(/matches no source shape/)
+    expect(validateSource('', null).error).toMatch(/non-empty string/)
+    expect(validateSource(42, null).error).toMatch(/non-empty string/)
   })
 })
 
@@ -296,5 +362,146 @@ describe('checkInvariants wiring', () => {
     const baseline = join(dir, 'verify-baselines', 'invariants.json')
     await checkInvariants({ cwd: dir, repo: 'scratch', baselinePath: 'verify-baselines/invariants.json', argv: ['--write-baseline'] })
     expect(readBaseline(baseline).length).toBeGreaterThan(0)
+  })
+})
+
+describe('loud failure paths', () => {
+  it('loadRegistry refuses an absent registry and invalid JSON, naming the path', () => {
+    expect(() => loadRegistry(join(tmpdir(), 'no-such-registry.json'))).toThrow(/registry not found/)
+    const dir = tempRepo()
+    writeFileSync(join(dir, 'registry.json'), 'not json')
+    expect(() => loadRegistry(join(dir, 'registry.json'))).toThrow(/not valid JSON/)
+  })
+
+  it('repoNameFromGit: this repo resolves, a directory with no git returns null', () => {
+    expect(repoNameFromGit(REPO_ROOT)).toBe('verify-checks')
+    expect(repoNameFromGit(tmpdir())).toBeNull()
+  })
+
+  it('validateRegistry refuses shape defects: non-registry, wrong format, empty entries, bad entries', () => {
+    expect(validateRegistry(null).findings[0]).toMatch(/registry must be a JSON object/)
+    expect(validateRegistry([]).findings[0]).toMatch(/registry must be a JSON object/)
+    expect(validateRegistry({ format: 'other/1', entries: [] }).findings[0]).toMatch(/format must be/)
+    expect(validateRegistry({ format: 'invariants-registry/1' }).findings[0]).toMatch(/non-empty array/)
+    const entry = (over) => ({ format: 'invariants-registry/1', entries: [{ id: 'x', statement: 's', sources: ['R3-2'], scope: { repos: 'all', paths: ['**'] }, enforcement: 'review', added: '2026-10-16', ...over }] })
+    const registryOf = (entries) => ({ format: 'invariants-registry/1', entries })
+    expect(validateRegistry(entry({ id: 'NOPE' })).findings.join(' ')).toMatch(/id must be lowercase kebab-case/)
+    expect(validateRegistry(registryOf([null])).findings.join(' ')).toMatch(/an entry must be an object/)
+    expect(validateRegistry(registryOf(['x'])).findings.join(' ')).toMatch(/an entry must be an object/)
+    expect(validateRegistry({ format: 'invariants-registry/1', entries: entry({}).entries.concat(entry({}).entries) }).findings.join(' ')).toMatch(/duplicate id/)
+    expect(validateRegistry(entry({ statement: ' ' })).findings.join(' ')).toMatch(/statement must be a non-empty string/)
+    expect(validateRegistry(entry({ statement: 'x'.repeat(301) })).findings.join(' ')).toMatch(/statement is 301 characters/)
+    expect(validateRegistry(entry({ class: 'Bad Slug' })).findings.join(' ')).toMatch(/class must be a defect-class slug/)
+    expect(validateRegistry(entry({ added: 'once' })).findings.join(' ')).toMatch(/added must be an ISO date/)
+    expect(validateRegistry(entry({ sources: [] })).findings.join(' ')).toMatch(/sources must be a non-empty array/)
+    expect(validateRegistry(entry({ sources: [7] })).findings.join(' ')).toMatch(/a source must be a non-empty string/)
+    expect(validateRegistry(entry({ scope: null })).findings.join(' ')).toMatch(/scope must be an object/)
+    expect(validateRegistry(entry({ scope: { repos: 'everywhere', paths: ['**'] } })).findings.join(' ')).toMatch(/scope.repos must be/)
+    expect(validateRegistry(entry({ scope: { repos: ['ok', ''] } })).findings.join(' ')).toMatch(/scope.repos must be/)
+    expect(validateRegistry(entry({ scope: { repos: 'all', paths: [] } })).findings.join(' ')).toMatch(/scope.paths must be/)
+    expect(validateRegistry(entry({ scope: { repos: 'all', paths: ['ok', ' '] } })).findings.join(' ')).toMatch(/scope.paths must be/)
+    expect(validateRegistry(entry({ enforcement: 'maybe' })).findings.join(' ')).toMatch(/enforcement must be/)
+    expect(validateRegistry(entry({ enforcement: 'check' })).findings.join(' ')).toMatch(/does not exist/)
+  })
+
+  it('an unparsable workflow is a finding, not a skip; a scalar-root YAML is ignored', () => {
+    const dir = tempRepo()
+    mkdirSync(join(dir, '.github', 'workflows'), { recursive: true })
+    writeFileSync(join(dir, '.github', 'workflows', 'broken.yml'), 'name: [unclosed')
+    writeFileSync(join(dir, '.github', 'workflows', 'scalar.yml'), 'just a string\n')
+    const findings = workflowCheck({ cwd: dir, files: ['.github/workflows/broken.yml', '.github/workflows/scalar.yml'] })
+    expect(findings).toHaveLength(1)
+    expect(findings[0].message).toMatch(/not valid YAML/)
+  })
+
+  it('selfTestEntry refuses every way a fixture can rot, with the reason', async () => {
+    expect(await selfTestEntry({ id: 'no-such-invariant', scope: { paths: ['src/**'] } })).toContain('does not exist')
+    expect(await selfTestEntry({ id: 'app-no-web-storage', scope: { paths: ['src/**'] } }, { fixtureRoot: REPO_ROOT })).toContain('violating fixture missing')
+    expect(await selfTestEntry({ id: 'app-no-web-storage', scope: { paths: ['src/**'] } }, { fixtureRoot: join(REPO_ROOT, 'test', 'invariants') })).toBeNull()
+    expect(await selfTestEntry({ id: 'workflow-secret-pair-gated-together', scope: { paths: ['src/**'] } }, { fixtureRoot: join(REPO_ROOT, 'test', 'invariants') })).toContain('produces no finding')
+    // a clean fixture that FINDS something refuses the run — the fixture rotted
+    const root = tempRepo()
+    for (const half of ['violating', 'clean']) {
+      mkdirSync(join(root, 'workflow-secret-pair-gated-together', half, '.github', 'workflows'), { recursive: true })
+      cpSync(
+        join(REPO_ROOT, 'test', 'invariants', 'workflow-secret-pair-gated-together', 'violating', '.github', 'workflows', 'cache.yml'),
+        join(root, 'workflow-secret-pair-gated-together', half, '.github', 'workflows', 'cache.yml'),
+      )
+    }
+    expect(await selfTestEntry(
+      { id: 'workflow-secret-pair-gated-together', scope: { paths: ['.github/workflows/*.yml'] } },
+      { fixtureRoot: root },
+    )).toContain('clean fixture produces 1 finding(s)')
+  })
+
+  it('parserProvider throws loudly when no loader can produce a TypeScript parser', () => {
+    const getTs = parserProvider(REPO_ROOT, [() => null, () => { throw new Error('no typescript here') }])
+    expect(() => getTs()).toThrow(/no TypeScript parser API found/)
+  })
+
+  it('runInvariants stops before running anything when the registry itself is invalid', async () => {
+    const dir = tempRepo()
+    mkdirSync(join(dir, '.github', 'workflows'), { recursive: true })
+    writeFileSync(join(dir, '.github', 'workflows', 'cache.yml'), 'jobs: {a: {steps: [{if: env.DEPLOY_APP_ID != "", run: x}]}}\n')
+    const broken = { format: 'invariants-registry/1', entries: [{ id: 'bad', statement: '', sources: [], scope: { repos: 'all', paths: ['**'] }, enforcement: 'review', added: 'x' }] }
+    const result = await runInvariants({ cwd: dir, name: 'scratch', kind: { core: false, app: false }, registry: broken })
+    expect(result.run).toEqual([])
+    expect(result.registry.length).toBeGreaterThan(0)
+  })
+
+  it('runInvariants reports a failed self-test as a REGISTRY defect and never runs that check', async () => {
+    const dir = tempRepo()
+    mkdirSync(join(dir, '.github', 'workflows'), { recursive: true })
+    writeFileSync(join(dir, '.github', 'workflows', 'cache.yml'), 'jobs: {a: {steps: [{run: x}]}}\n')
+    const result = await runInvariants({ cwd: dir, name: 'scratch', kind: { core: false, app: false }, fixtureRoot: join(REPO_ROOT, 'no-such-fixtures') })
+    expect(result.registry.some((defect) => defect.includes('fixture missing'))).toBe(true)
+    expect(result.run).toEqual([])
+  })
+
+  it('checkInvariants without a repo name and without git fails loudly rather than guessing', async () => {
+    const errors = []
+    const originalError = console.error
+    console.error = (...args) => errors.push(args.join(' '))
+    try {
+      await checkInvariants({ cwd: tempRepo(), repo: null, baselinePath: 'verify-baselines/invariants.json', argv: [] })
+    } finally {
+      console.error = originalError
+    }
+    expect(process.exitCode).toBe(1)
+    expect(errors.join('\n')).toContain('cannot determine the repo name')
+    process.exitCode = undefined
+  })
+
+  it('review entries in scope are announced, not run', async () => {
+    const dir = tempRepo()
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x' }))
+    mkdirSync(join(dir, '.github', 'workflows'), { recursive: true })
+    writeFileSync(join(dir, '.github', 'workflows', 'ci.yml'), 'name: ci\non: push\n')
+    const logs = []
+    const originalLog = console.log
+    console.log = (...args) => logs.push(args.join(' '))
+    try {
+      await checkInvariants({ cwd: dir, repo: 'site-main', baselinePath: 'verify-baselines/invariants.json', argv: ['--write-baseline'] })
+    } finally {
+      console.log = originalLog
+    }
+    expect(logs.join('\n')).toMatch(/review-enforced entries in scope/)
+    expect(logs.join('\n')).toMatch(/e02/)
+    process.exitCode = undefined
+  })
+
+  it('a registry-defect run fails outright through checkInvariants, naming the registry not the baseline', async () => {
+    const dir = tempRepo()
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'scratch', 'immediately.run': {} }))
+    const errors = []
+    const originalError = console.error
+    console.error = (...args) => errors.push(args.join(' '))
+    try {
+      await checkInvariants({ cwd: dir, repo: 'scratch', baselinePath: 'verify-baselines/invariants.json', argv: [] })
+    } finally {
+      console.error = originalError
+    }
+    expect(errors.join('\n')).toMatch(/REGISTRY/)
+    expect(errors.join('\n')).toMatch(/fix the registry, not the baseline/)
   })
 })
