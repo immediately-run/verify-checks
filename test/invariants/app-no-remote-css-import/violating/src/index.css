@@ -1,0 +1,4 @@
+/* The violating half: both spellings of a remote @import. */
+@import url('https://fonts.googleapis.com/css2?family=Gabarito:wght@400');
+@import "https://cdn.example.com/reset.css";
+:root { --fg: #111; }

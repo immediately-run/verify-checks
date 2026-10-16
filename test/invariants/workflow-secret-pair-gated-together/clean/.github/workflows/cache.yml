@@ -1,0 +1,15 @@
+name: cache
+on: push
+jobs:
+  mint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: A pair-gated mint, the R3-635 shape
+        env:
+          DEPLOY_APP_ID: ${{ secrets.DEPLOY_APP_ID }}
+          DEPLOY_APP_PRIVATE_KEY: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+        if: ${{ env.DEPLOY_APP_ID != '' && env.DEPLOY_APP_PRIVATE_KEY != '' }}
+        run: echo "both members of the pair are present"
+      - name: An if that names neither member is none of this check's business
+        if: ${{ github.event_name == 'push' }}
+        run: echo ok

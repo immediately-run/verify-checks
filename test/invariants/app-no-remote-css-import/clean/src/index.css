@@ -1,0 +1,4 @@
+/* The clean half: local imports and an unquoted local url() only. */
+@import './tokens.css';
+@import url(./local.css);
+:root { --fg: var(--ink); }

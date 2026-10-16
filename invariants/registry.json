@@ -1,0 +1,569 @@
+{
+  "format": "invariants-registry/1",
+  "entries": [
+    {
+      "id": "app-no-web-storage",
+      "statement": "No identifier reference to localStorage, sessionStorage, indexedDB or caches under src/ — an app runs at an opaque origin where even reading them throws SecurityError, so a typeof guard cannot catch it.",
+      "sources": [
+        "grove/CLAUDE.md Hard rules 8",
+        "content/specs/BROWSER_CAPABILITIES_SPEC.mdx"
+      ],
+      "scope": {
+        "repos": "apps",
+        "paths": [
+          "src/**/*.{ts,tsx,js,jsx,mjs,cjs}"
+        ]
+      },
+      "enforcement": "check",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "app-main-tsx-inert",
+      "statement": "src/main.tsx is for local dev/build only: it imports no CSS file and nothing from @immediately-run/sdk — anything the rendered tree needs must be reachable from src/App.tsx, which the platform renders.",
+      "sources": [
+        "grove/CLAUDE.md Hard rules 1-2"
+      ],
+      "scope": {
+        "repos": "apps",
+        "paths": [
+          "src/main.tsx"
+        ]
+      },
+      "enforcement": "check",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "app-no-remote-css-import",
+      "statement": "No @import of an http(s) URL in src/**/*.css — a remote font or stylesheet breaks offline in every stance and is blocked under compiled dispatch; fonts are declared assets the engine resolves.",
+      "sources": [
+        "R3-315",
+        "grove/CLAUDE.md Hard rules 6"
+      ],
+      "scope": {
+        "repos": "apps",
+        "paths": [
+          "src/**/*.css"
+        ]
+      },
+      "enforcement": "check",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "workflow-secret-pair-gated-together",
+      "statement": "A workflow if: that references one member of a declared secret pair (DEPLOY_APP_ID / DEPLOY_APP_PRIVATE_KEY) must reference both — gating the Pages-token mint on the id alone runs it with an empty key.",
+      "sources": [
+        "escape-classification E01",
+        "findings-log 2026-09-15"
+      ],
+      "scope": {
+        "repos": "all",
+        "paths": [
+          ".github/workflows/*.{yml,yaml}"
+        ]
+      },
+      "enforcement": "check",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e02",
+      "statement": "The host must spawn the authoring worker with the module type that matches how the built worker bundle loads its chunks (importScripts implies a classic worker).",
+      "sources": [
+        "escape-classification E02"
+      ],
+      "scope": {
+        "repos": [
+          "site-main"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e10",
+      "statement": "No two landing bands may share one card's markup; verify's clone detection fails on a duplicated component body.",
+      "sources": [
+        "escape-classification E10"
+      ],
+      "scope": {
+        "repos": [
+          "landing-page"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e12",
+      "statement": "verify must fail on a CSS selector that matches no element in the shipped components (dead-selector check).",
+      "sources": [
+        "escape-classification E12"
+      ],
+      "scope": {
+        "repos": [
+          "landing-page"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e13",
+      "statement": "A prefers-reduced-motion override must target only elements that declare a transition or animation.",
+      "sources": [
+        "escape-classification E13"
+      ],
+      "scope": {
+        "repos": [
+          "landing-page"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e16",
+      "statement": "An external URL must be named once in a shared constant and imported everywhere it is used.",
+      "sources": [
+        "escape-classification E16"
+      ],
+      "scope": {
+        "repos": [
+          "landing-page"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e17",
+      "statement": "Every host-envelope unwrap must go through the one shared unwrap helper; no call site may unwrap by hand.",
+      "sources": [
+        "escape-classification E17"
+      ],
+      "scope": {
+        "repos": [
+          "sdk"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e23",
+      "statement": "An unsubscribe must remove exactly that client from the registry, pinned by a test that asserts the entry shrinks.",
+      "sources": [
+        "escape-classification E23"
+      ],
+      "scope": {
+        "repos": [
+          "sandpack"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e25",
+      "statement": "verify must fail on placeholder copy (Lorem ipsum) and on exported components nothing imports (orphan check).",
+      "sources": [
+        "escape-classification E25"
+      ],
+      "scope": {
+        "repos": [
+          "site-main"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e27",
+      "statement": "verify's orphan check must fail when an unimported file exists while the debt ledger claims no orphans.",
+      "sources": [
+        "escape-classification E27"
+      ],
+      "scope": {
+        "repos": [
+          "sandbox"
+        ],
+        "paths": [
+          "src/**",
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e28",
+      "statement": "A security-sensitive pattern (Bearer regex, origin block) must exist as one named symbol; clone detection fails on a second spelling.",
+      "sources": [
+        "escape-classification E28"
+      ],
+      "scope": {
+        "repos": [
+          "backend"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e29",
+      "statement": "Reading the repo's own package.json must go through one shared helper; clone detection fails on an inlined re-spelling.",
+      "sources": [
+        "escape-classification E29"
+      ],
+      "scope": {
+        "repos": [
+          "site-main"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e30",
+      "statement": "The origin-refusal and port-validation logic must each exist once as a shared import; clone detection fails on a re-spelling.",
+      "sources": [
+        "escape-classification E30"
+      ],
+      "scope": {
+        "repos": [
+          "cli"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e31",
+      "statement": "verify must fail when a debt-ledger entry cites a file that no longer exists or a resolved entry stays open.",
+      "sources": [
+        "escape-classification E31"
+      ],
+      "scope": {
+        "repos": [
+          "landing-page",
+          "sdk",
+          "sandbox",
+          "site-main",
+          "backend",
+          "cli"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e33",
+      "statement": "verify must run a no-floating-promises lint; every async callback passed to hot.accept/decline is awaited or explicitly caught.",
+      "sources": [
+        "escape-classification E33"
+      ],
+      "scope": {
+        "repos": [
+          "sandbox"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e34",
+      "statement": "Every handshake promise must carry a .catch that maps rejection to a typed, named error; an unhandled rejection is a verify failure.",
+      "sources": [
+        "escape-classification E34"
+      ],
+      "scope": {
+        "repos": [
+          "sandpack"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e38",
+      "statement": "Every fetch must carry an AbortSignal with a bounded timeout; verify lints for signal-less fetch.",
+      "sources": [
+        "escape-classification E38"
+      ],
+      "scope": {
+        "repos": [
+          "cli"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e39",
+      "statement": "verify must reject control characters (NUL and bidi overrides) in source files.",
+      "sources": [
+        "escape-classification E39"
+      ],
+      "scope": {
+        "repos": [
+          "sdk",
+          "cli"
+        ],
+        "paths": [
+          "src/**",
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e44",
+      "statement": "normalise must strip trailing inline comments before comparison, pinned by a self-test over commented workflow pairs.",
+      "sources": [
+        "escape-classification E44"
+      ],
+      "scope": {
+        "repos": [
+          "new-project-template"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e45",
+      "statement": "A blob ref containing a slash must round-trip through check-corpora untruncated, pinned by a fixture with a slashed ref.",
+      "sources": [
+        "escape-classification E45"
+      ],
+      "scope": {
+        "repos": [
+          "landing-page"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e47",
+      "statement": "claim.sh may record 'decision packet filed' only after the packet file is present on origin/main, checked against the remote, not the local tree.",
+      "sources": [
+        "escape-classification E47"
+      ],
+      "scope": {
+        "repos": [
+          "docs"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e50",
+      "statement": "check:archive must recognise the Exit section at any heading level ('## Exit' and '### Exit').",
+      "sources": [
+        "escape-classification E50"
+      ],
+      "scope": {
+        "repos": [
+          "docs"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e51",
+      "statement": "verify must fail when a spec section marked 'proposal' is owned by an archived roadmap item with an unfiled hand-off.",
+      "sources": [
+        "escape-classification E51"
+      ],
+      "scope": {
+        "repos": [
+          "docs"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e52",
+      "statement": "Option letters are counted only at option starts and must run in order without gaps, pinned by tests for both failure shapes.",
+      "sources": [
+        "escape-classification E52"
+      ],
+      "scope": {
+        "repos": [
+          "docs"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e53",
+      "statement": "Scripts must import the shared parsing helpers from check-roadmap-requires; clone detection fails on a copied frontmatter/scalar/readItems.",
+      "sources": [
+        "escape-classification E53"
+      ],
+      "scope": {
+        "repos": [
+          "docs"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e56",
+      "statement": "The inbox/malformed check must report near-miss 'Decision needed' headings (wrong case or level) as malformed packets, never skip them.",
+      "sources": [
+        "escape-classification E56"
+      ],
+      "scope": {
+        "repos": [
+          "docs"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e57",
+      "statement": "The presence queue must include available items whose requiredResources include human-operator or real-iphone.",
+      "sources": [
+        "escape-classification E57"
+      ],
+      "scope": {
+        "repos": [
+          "docs"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e58",
+      "statement": "check:claims must skip items with an open decision packet and treat a dated 'blocked on' note as re-dating the claim.",
+      "sources": [
+        "escape-classification E58"
+      ],
+      "scope": {
+        "repos": [
+          "docs"
+        ],
+        "paths": [
+          "scripts/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e60",
+      "statement": "A size computed from a count must be clamped to a ceiling, pinned by a test asserting the maximum rendered size.",
+      "sources": [
+        "escape-classification E60"
+      ],
+      "scope": {
+        "repos": [
+          "grove"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    },
+    {
+      "id": "e68",
+      "statement": "A checker's failure output must print every field it compares; a diff that hides a changed field is a verify failure.",
+      "sources": [
+        "escape-classification E68"
+      ],
+      "scope": {
+        "repos": [
+          "sdk"
+        ],
+        "paths": [
+          "src/**"
+        ]
+      },
+      "enforcement": "review",
+      "added": "2026-10-16"
+    }
+  ]
+}
