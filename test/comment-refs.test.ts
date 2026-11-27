@@ -108,14 +108,25 @@ describe('findCommentRefFindings over the fixture project', () => {
     }
   })
 
-  it('an absolute span never resolves against the host filesystem', () => {
+  it('an absolute span is not a reference: a VFS path (`/app/src/App.tsx`) is never a repo file', () => {
+    expect(classifySpan('/app/src/App.tsx')).toBeNull()
+    expect(classifySpan('/node_modules/react/index.d.ts')).toBeNull()
+    expect(classifySpan('//empty.js')).toBeNull()
+    expect(classifySpan('src/App.tsx')).toEqual({ kind: 'path', name: 'src/App.tsx' })
+    expect(classifySpan('./a.ts')).toEqual({ kind: 'path', name: './a.ts' })
+  })
+
+  it('an absolute span is neither resolved against the host filesystem nor found', () => {
     const dir = mkdtempSync(join(tmpdir(), 'comment-refs-abs-'))
     try {
       const hostFile = join(dir, 'host.ts')
       writeFileSync(hostFile, 'export const y = 1\n')
       writeFileSync(join(dir, 'a.ts'), `// reads \`${hostFile}\` for it\nexport const x = 1\n`)
       const { findings } = findCommentRefFindings({ patterns: ['a.ts'], cwd: dir })
-      expect(spanSet(findings)).toContain(hostFile)
+      // The host file exists, yet the verdict is the same on every machine:
+      // the span is skipped, not resolved.
+      expect(spanSet(findings)).not.toContain(hostFile)
+      expect(findings).toHaveLength(0)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

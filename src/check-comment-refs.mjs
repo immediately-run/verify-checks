@@ -101,6 +101,15 @@ export function classifySpan(span) {
   // whitespace (`node scripts/check-lock-version.mjs`) is a shell command —
   // never a reference (the site-main wiring sample, R3-1085 exit
   // criterion 4; the whitespace class is review round 1).
+  //
+  // An absolute span (`/app/src/App.tsx`, `/node_modules/react/index.js`)
+  // names a runtime or virtual-filesystem location, never a file of the repo
+  // under scan: it cannot resolve against the repo, and resolving it against
+  // the HOST would make the verdict machine-dependent. So it is not a
+  // reference. Before 0.12.0 it was always a finding; in sandbox, a bundler
+  // whose comments discuss the app's VFS, that was 32 of 134 first-run hits
+  // (R3-1085 exit criterion 4).
+  if (span.startsWith('/')) return null
   if (span.includes('/') && PATH_SPAN.test(span) && !/[*<>{}\s]/.test(span)) return { kind: 'path', name: span }
   if (MEMBER_SPAN.test(span)) {
     // Only the last segment is checked, and only when it is identifier-shaped:
