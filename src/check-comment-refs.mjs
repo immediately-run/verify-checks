@@ -18,7 +18,10 @@ import { fingerprint, ratchet, readBaseline } from './baseline.mjs'
 // matching, which R12 does not govern.
 //
 // A backticked span is a reference when it matches one of three shapes:
-//   path:       contains '/' and ends in a source/doc extension — resolves if
+//   path:       contains '/' and ends in a source/doc extension, and is not
+//               absolute (`/app/src/App.tsx` is a runtime/VFS location), not
+//               a package specifier (`@scope/pkg/x.js`, `name@^range/x.json`),
+//               and carries no glob, placeholder or whitespace — resolves if
 //               the file exists relative to the repo root, the commenting
 //               file's directory, or one of the consumer's pathRoots (e.g.
 //               ['src'] for these repos' src-relative citations)
@@ -110,6 +113,11 @@ export function classifySpan(span) {
   // whose comments discuss the app's VFS, that was 32 of 134 first-run hits
   // (R3-1085 exit criterion 4).
   if (span.startsWith('/')) return null
+  // A package specifier (`@immediately-run/sdk/runtime.js`, a probe shape like
+  // `name@^range/package.json`) names a file inside a published package,
+  // never one of this repo: an `@` in the first segment marks it (the same
+  // sandbox sample, review round 1).
+  if (span.split('/')[0].includes('@')) return null
   if (span.includes('/') && PATH_SPAN.test(span) && !/[*<>{}\s]/.test(span)) return { kind: 'path', name: span }
   if (MEMBER_SPAN.test(span)) {
     // Only the last segment is checked, and only when it is identifier-shaped:
@@ -261,7 +269,10 @@ export function findCommentRefFindings({ patterns, ignore = [], allow, pathRoots
               // under src/; review of the site-main wiring sample, R3-1085
               // exit criterion 4). An absolute span never resolves against
               // the HOST filesystem, or a baseline seeded on one machine
-              // flips on another (round 1).
+              // flips on another (round 1). classifySpan already drops every
+              // span starting with '/', so on POSIX this guard cannot fire;
+              // it stays for win32 drive-letter forms, which path.isAbsolute
+              // recognises only there.
               !isAbsolute(span) &&
               (existsSync(resolve(cwd, span)) ||
                 existsSync(resolve(dirname(resolve(cwd, file)), span)) ||

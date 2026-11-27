@@ -116,6 +116,23 @@ describe('findCommentRefFindings over the fixture project', () => {
     expect(classifySpan('./a.ts')).toEqual({ kind: 'path', name: './a.ts' })
   })
 
+  it('a package specifier (`@scope/pkg/x.js`, `name@^range/x.json`) is not a reference', () => {
+    expect(classifySpan('@immediately-run/sdk/runtime.js')).toBeNull()
+    expect(classifySpan('name@^range/package.json')).toBeNull()
+    expect(classifySpan('lib/x@2.ts')).toEqual({ kind: 'path', name: 'lib/x@2.ts' }) // an `@` past the first segment is a file name
+  })
+
+  it('an allow entry keyed by an absolute path is stale: no span can cite it any more', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'comment-refs-absallow-'))
+    try {
+      writeFileSync(join(dir, 'a.ts'), '// reads `/etc/config/x.json` at boot\nexport const x = 1\n')
+      const { findings } = findCommentRefFindings({ patterns: ['a.ts'], cwd: dir, allow: { '/etc/config/x.json': 'a runtime path' } })
+      expect(findings).toEqual([expect.objectContaining({ kind: 'stale-allow', span: '/etc/config/x.json' })])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('an absolute span is neither resolved against the host filesystem nor found', () => {
     const dir = mkdtempSync(join(tmpdir(), 'comment-refs-abs-'))
     try {
