@@ -108,14 +108,42 @@ describe('findCommentRefFindings over the fixture project', () => {
     }
   })
 
-  it('an absolute span never resolves against the host filesystem', () => {
+  it('an absolute span is not a reference: a VFS path (`/app/src/App.tsx`) is never a repo file', () => {
+    expect(classifySpan('/app/src/App.tsx')).toBeNull()
+    expect(classifySpan('/node_modules/react/index.d.ts')).toBeNull()
+    expect(classifySpan('//empty.js')).toBeNull()
+    expect(classifySpan('src/App.tsx')).toEqual({ kind: 'path', name: 'src/App.tsx' })
+    expect(classifySpan('./a.ts')).toEqual({ kind: 'path', name: './a.ts' })
+  })
+
+  it('a package specifier (`@scope/pkg/x.js`, `name@^range/x.json`) is not a reference', () => {
+    expect(classifySpan('@immediately-run/sdk/runtime.js')).toBeNull()
+    expect(classifySpan('name@^range/package.json')).toBeNull()
+    expect(classifySpan('lib/x@2.ts')).toEqual({ kind: 'path', name: 'lib/x@2.ts' }) // an `@` past the first segment is a file name
+  })
+
+  it('an allow entry keyed by an absolute path is stale: no span can cite it any more', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'comment-refs-absallow-'))
+    try {
+      writeFileSync(join(dir, 'a.ts'), '// reads `/etc/config/x.json` at boot\nexport const x = 1\n')
+      const { findings } = findCommentRefFindings({ patterns: ['a.ts'], cwd: dir, allow: { '/etc/config/x.json': 'a runtime path' } })
+      expect(findings).toEqual([expect.objectContaining({ kind: 'stale-allow', span: '/etc/config/x.json' })])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('an absolute span is neither resolved against the host filesystem nor found', () => {
     const dir = mkdtempSync(join(tmpdir(), 'comment-refs-abs-'))
     try {
       const hostFile = join(dir, 'host.ts')
       writeFileSync(hostFile, 'export const y = 1\n')
       writeFileSync(join(dir, 'a.ts'), `// reads \`${hostFile}\` for it\nexport const x = 1\n`)
       const { findings } = findCommentRefFindings({ patterns: ['a.ts'], cwd: dir })
-      expect(spanSet(findings)).toContain(hostFile)
+      // The host file exists, yet the verdict is the same on every machine:
+      // the span is skipped, not resolved.
+      expect(spanSet(findings)).not.toContain(hostFile)
+      expect(findings).toHaveLength(0)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
